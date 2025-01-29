@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
+import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 
 export const VoiceAnalytics: React.FC = () => {
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
@@ -101,8 +102,8 @@ export const VoiceAnalytics: React.FC = () => {
 
     const startListening = () => {
         const speechConfig = speechsdk.SpeechConfig.fromSubscription(
-            "EgkxRJu9uRMdvlG5dGJvVxka3C1j4E56Vt8cadgYODj61hG6qmJoJQQJ99BAACYeBjFXJ3w3AAAYACOGqjCf",  // Replace with your actual key
-            "eastus"
+            SPEECH_KEY,
+            SPEECH_REGION
         );
 
         speechConfig.speechRecognitionLanguage = "en-US";

@@ -36,6 +36,3 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
-
-            // "EgkxRJu9uRMdvlG5dGJvVxka3C1j4E56Vt8cadgYODj61hG6qmJoJQQJ99BAACYeBjFXJ3w3AAAYACOGqjCf",  // Replace with your actual key
-            // "eastus"
