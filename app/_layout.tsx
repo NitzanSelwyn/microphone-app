@@ -29,11 +29,13 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
         <Stack.Screen name="+not-found" />
       </Stack>
-      <StatusBar style="auto" />
     </ThemeProvider>
   );
 }
+
+            // "EgkxRJu9uRMdvlG5dGJvVxka3C1j4E56Vt8cadgYODj61hG6qmJoJQQJ99BAACYeBjFXJ3w3AAAYACOGqjCf",  // Replace with your actual key
+            // "eastus"
