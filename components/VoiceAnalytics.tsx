@@ -4,6 +4,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
+import { OPENAI_API_KEY } from '@/env';
 
 export const VoiceAnalytics: React.FC = () => {
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
@@ -14,6 +17,8 @@ export const VoiceAnalytics: React.FC = () => {
     const [speakerLevel, setSpeakerLevel] = useState<number>(0);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const animatedHeight = useRef(new Animated.Value(1)).current;
+    const [recording, setRecording] = useState<Audio.Recording | null>(null);
+    const [processingAudio, setProcessingAudio] = useState(false);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
@@ -100,65 +105,137 @@ export const VoiceAnalytics: React.FC = () => {
         }
     };
 
-    const startListening = () => {
-        const speechConfig = speechsdk.SpeechConfig.fromSubscription(
-            SPEECH_KEY,
-            SPEECH_REGION
-        );
+    const startRecording = async () => {
+        try {
+            await Audio.requestPermissionsAsync();
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+            });
 
-        speechConfig.speechRecognitionLanguage = "en-US";
-        const audioConfig = speechsdk.AudioConfig.fromDefaultMicrophoneInput();
-        const transcriber = new speechsdk.ConversationTranscriber(speechConfig, audioConfig);
+            const { recording } = await Audio.Recording.createAsync(
+                Audio.RecordingOptionsPresets.HIGH_QUALITY
+            );
 
-        transcriber.transcribed = (s, e) => {
-            const speakerId = e.result.speakerId || 'unknown';
-            const text = e.result.text;
-
-            if (text.trim()) {
-                const speaker = `Speaker ${speakerId}`;
-                if (speaker === 'Speaker Guest-1') {
-                    calculateBaseline();
-                }
-
-                setCurrentSpeaker(speaker);
-                if (!activeSpeakers.includes(speaker)) {
-                    setActiveSpeakers(prev => [...prev, speaker]);
-                }
-
-                console.log(speaker, text);
-
-                setTranscripts(prev => [...prev, {
-                    speaker: speaker,
-                    text: text
-                }]);
-
-                setTimeout(() => setCurrentSpeaker(null), 5000);
-            }
-        };
-
-        transcriber.sessionStarted = () => {
+            setRecording(recording);
+            setIsListening(true);
             startAudioMonitoring();
-        };
+        } catch (err) {
+            console.error('Failed to start recording', err);
+        }
+    };
 
-        transcriber.startTranscribingAsync(
-            () => {
-                setIsListening(true);
-            },
-            (err) => {
-                console.error('Error starting transcription:', err);
-                setIsListening(false);
-            }
-        );
+    const stopRecording = async () => {
+        if (!recording) return;
 
-        return () => {
-            if (isListening) {
-                transcriber.stopTranscribingAsync();
-                setIsListening(false);
-                if (audioContextRef.current) {
-                    audioContextRef.current.close();
-                }
+        setIsListening(false);
+        setProcessingAudio(true);
+
+        try {
+            await recording.stopAndUnloadAsync();
+            const uri = recording.getURI();
+            if (!uri) throw new Error('No recording URI');
+
+            console.log('Recording URI:', uri);
+            
+            const audioData = await FileSystem.readAsStringAsync(uri, {
+                encoding: FileSystem.EncodingType.Base64,
+            });
+            console.log('Audio data length:', audioData.length);
+
+            const fileInfo = await FileSystem.getInfoAsync(uri);
+            console.log('File info:', fileInfo);
+
+            const formData = new FormData();
+            const fileObject = {
+                uri: uri,
+                type: 'audio/m4a',
+                name: 'recording.m4a',
+                _data: audioData,
+                _size: fileInfo.exists ? fileInfo.size || 0 : 0
+            };
+            console.log('File object:', fileObject);
+            
+            formData.append('file', fileObject as any);
+            formData.append('model', 'whisper-1');
+            formData.append('response_format', 'verbose_json');
+            formData.append('language', 'en');
+
+            console.log('Sending request to Whisper API...');
+            const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'multipart/form-data',
+                },
+                body: formData,
+            });
+
+            console.log('Response status:', response.status);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API error response:', errorText);
+                throw new Error(`API error: ${response.status} ${errorText}`);
             }
-        };
+
+            const result = await response.json();
+            console.log('API response:', result);
+
+            // Process the transcription with ChatGPT for speaker diarization
+            const diarizationPrompt = `
+                Given this transcription, identify different speakers and format it with speaker labels.
+                The transcription is: "${result.text}"
+                Format each line with "Speaker X:" where X is a number.
+            `;
+
+            const chatResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: 'gpt-3.5-turbo',
+                    messages: [{
+                        role: 'user',
+                        content: diarizationPrompt,
+                    }],
+                }),
+            });
+
+            const diarizedResult = await chatResponse.json();
+            const diarizedText = diarizedResult.choices[0].message.content;
+
+            // Parse the diarized text and update transcripts
+            const lines = diarizedText.split('\n').filter((line: any) => line.trim());
+            const newTranscripts = lines.map((line: any) => {
+                const [speaker, ...textParts] = line.split(':');
+                return {
+                    speaker: speaker.trim(),
+                    text: textParts.join(':').trim(),
+                };
+            });
+
+            setTranscripts(prev => [...prev, ...newTranscripts]);
+
+            // Update active speakers
+            const speakers = new Set(newTranscripts.map((t: any) => t.speaker));
+            setActiveSpeakers(prev => [...new Set([...prev, ...Array.from(speakers)])] as string[]);
+
+        } catch (err) {
+            console.error('Failed to process recording', err);
+        } finally {
+            setProcessingAudio(false);
+            setRecording(null);
+        }
+    };
+
+    const toggleRecording = () => {
+        if (recording) {
+            stopRecording();
+        } else {
+            startRecording();
+        }
     };
 
     const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
@@ -232,11 +309,17 @@ export const VoiceAnalytics: React.FC = () => {
                         </Text>
 
                         <TouchableOpacity
-                            style={[styles.button, { backgroundColor: isListening ? '#ef4444' : '#22c55e' }]}
-                            onPress={() => !isListening && startListening()}
+                            style={[
+                                styles.button,
+                                { backgroundColor: isListening ? '#ef4444' : '#22c55e' },
+                                processingAudio && { opacity: 0.7 }
+                            ]}
+                            onPress={toggleRecording}
+                            disabled={processingAudio}
                         >
                             <Text style={styles.buttonText}>
-                                {isListening ? 'Stop Recording' : 'Start Recording'}
+                                {processingAudio ? 'Processing...' :
+                                    isListening ? 'Stop Recording' : 'Start Recording'}
                             </Text>
                         </TouchableOpacity>
                     </View>
