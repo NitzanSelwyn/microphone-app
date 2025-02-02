@@ -1,12 +1,13 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, TextInput, Modal } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import { OPENAI_API_KEY } from '@/env';
+import { createIdentificationProfile, enrollSpeakerAudio, identifySpeakers } from '@/services/voiceAnalyticsApi';
+import { styles } from './VoiceAnalytics.styles';
 
 export const VoiceAnalytics: React.FC = () => {
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
@@ -19,12 +20,25 @@ export const VoiceAnalytics: React.FC = () => {
     const animatedHeight = useRef(new Animated.Value(1)).current;
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [processingAudio, setProcessingAudio] = useState(false);
+    const [audioChunks, setAudioChunks] = useState<Uint8Array[]>([]);
+    const chunkInterval = useRef<NodeJS.Timeout | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const baselineNoiseRef = useRef<number>(0);
     const recentNoiseLevelsRef = useRef<number[]>([]);
+
+    const [speakerLevelColor, setSpeakerLevelColor] = useState('#22c55e');
+    const [recognizer, setRecognizer] = useState<speechsdk.SpeechRecognizer | null>(null);
+    const [speakerSegments, setSpeakerSegments] = useState<{ speaker: string, startTime: number, endTime: number }[]>([]);
+
+    const [profileIds, setProfileIds] = useState<string[]>([]);
+    const [enrolledProfiles, setEnrolledProfiles] = useState<{ [profileId: string]: string }>({});
+    const [speakerName, setSpeakerName] = useState('');
+    const [enrollmentRecording, setEnrollmentRecording] = useState<Audio.Recording | null>(null);
+    const [audioRecorder, setAudioRecorder] = useState<Audio.Recording | null>(null);
+    const [audioBuffer, setAudioBuffer] = useState<Blob[]>([]);
 
     const calculateAudioLevel = (dataArray: Uint8Array): number => {
         // Calculate RMS (Root Mean Square) of the audio data
@@ -72,31 +86,34 @@ export const VoiceAnalytics: React.FC = () => {
             const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
 
             const updateLevels = () => {
-                if (analyserRef.current) {
+                if (analyserRef.current && isListening) {  // Only update when listening
                     analyserRef.current.getByteFrequencyData(dataArray);
                     const currentLevel = calculateAudioLevel(dataArray);
 
                     // Store recent noise levels
                     recentNoiseLevelsRef.current.push(currentLevel);
-                    if (recentNoiseLevelsRef.current.length > 120) { // 2 seconds at 60fps
+                    if (recentNoiseLevelsRef.current.length > 120) {
                         recentNoiseLevelsRef.current.shift();
                     }
 
-                    // Calculate moving average for more stable readings
                     const movingAverage = calculateMovingAverage(recentNoiseLevelsRef.current);
 
-                    // Update background level when no one is speaking
-                    if (currentSpeaker === null) {
-                        setBackgroundLevel(movingAverage);
-                        setSpeakerLevel(0);
+                    // Update speaker level
+                    setSpeakerLevel(movingAverage);
+
+                    // If the level is significantly above background, consider it speech
+                    if (movingAverage > backgroundLevel + 10) {
+                        setSpeakerLevelColor('#22c55e');
                     } else {
-                        debugger;
-                        // When someone is speaking, calculate the differential from background
-                        const differential = Math.max(0, movingAverage - backgroundLevel);
-                        setSpeakerLevel(differential);
+                        // Update background level when there's no speech
+                        setBackgroundLevel(prevLevel => {
+                            const newLevel = (prevLevel * 0.95) + (movingAverage * 0.05);
+                            return Math.round(newLevel);
+                        });
                     }
+
+                    requestAnimationFrame(updateLevels);
                 }
-                requestAnimationFrame(updateLevels);
             };
 
             updateLevels();
@@ -105,133 +122,125 @@ export const VoiceAnalytics: React.FC = () => {
         }
     };
 
-    const startRecording = async () => {
-        try {
-            await Audio.requestPermissionsAsync();
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
-            });
+    const startTranscription = () => {
+        const speechConfig = speechsdk.SpeechConfig.fromSubscription(SPEECH_KEY, SPEECH_REGION);
+        speechConfig.speechRecognitionLanguage = "en-US";
 
+        const audioConfig = speechsdk.AudioConfig.fromDefaultMicrophoneInput();
+        const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+
+        recognizer.recognizing = (s, e) => {
+            console.log(`🎙️ Recognizing in progress: "${e.result.text}"`);
+        };
+
+        recognizer.recognized = async (s, e) => {
+            if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+                console.log(`✨ Speech recognized: "${e.result.text}"`);
+
+                let speakerName = 'Unknown Speaker';
+
+                // Try to identify speaker if we have audio buffer and enrolled profiles
+                if (profileIds.length > 0 && audioBuffer.length > 0) {
+                    const latestAudioBlob = audioBuffer[audioBuffer.length - 1];
+                    try {
+                        speakerName = await handleIdentifySpeakers(latestAudioBlob);
+                        console.log(`🔄 Mapping speech to speaker: "${e.result.text}" => ${speakerName}`);
+
+                        // Update current speaker
+                        setCurrentSpeaker(speakerName);
+
+                        // Update active speakers list
+                        setActiveSpeakers(prev => {
+                            if (!prev.includes(speakerName)) {
+                                console.log(`➕ New active speaker added: ${speakerName}`);
+                                return [...prev, speakerName];
+                            }
+                            return prev;
+                        });
+                    } catch (error) {
+                        console.error('❌ Speaker identification failed:', error);
+                    }
+                }
+
+                // Add transcript with identified speaker
+                setTranscripts(prev => {
+                    console.log(`📝 New transcript added: ${speakerName} - "${e.result.text}"`);
+                    return [...prev, { speaker: speakerName, text: e.result.text }];
+                });
+            } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
+                console.log("❌ NOMATCH: Speech could not be recognized.");
+            }
+        };
+
+        recognizer.canceled = (s, e) => {
+            console.log(`CANCELED: Reason=${e.reason}`);
+            recognizer.stopContinuousRecognitionAsync();
+        };
+
+        recognizer.sessionStopped = (s, e) => {
+            console.log("\n    Session stopped event.");
+            recognizer.stopContinuousRecognitionAsync();
+        };
+
+        recognizer.startContinuousRecognitionAsync();
+        setRecognizer(recognizer);
+    };
+
+    const stopTranscription = () => {
+        if (recognizer) {
+            recognizer.stopContinuousRecognitionAsync(() => {
+                console.log("Recognition stopped.");
+                setRecognizer(null);
+            });
+        }
+    };
+
+    const startAudioRecording = async () => {
+        try {
             const { recording } = await Audio.Recording.createAsync(
                 Audio.RecordingOptionsPresets.HIGH_QUALITY
             );
-
-            setRecording(recording);
-            setIsListening(true);
-            startAudioMonitoring();
-        } catch (err) {
-            console.error('Failed to start recording', err);
+            setAudioRecorder(recording);
+            // Clear previous buffer
+            setAudioBuffer([]);
+        } catch (error) {
+            console.error('Failed to start audio recording:', error);
         }
+    };
+
+    const stopAudioRecording = async () => {
+        if (!audioRecorder) return;
+        try {
+            await audioRecorder.stopAndUnloadAsync();
+            const uri = audioRecorder.getURI();
+            if (uri) {
+                const response = await fetch(uri);
+                const blob = await response.blob();
+                setAudioBuffer(prev => [...prev, blob]);
+            }
+        } catch (error) {
+            console.error('Failed to stop audio recording:', error);
+        }
+        setAudioRecorder(null);
+    };
+
+    const startRecording = async () => {
+        if (isListening) return;
+        setIsListening(true);
+        await startAudioRecording();
+        startAudioMonitoring();
+        startTranscription();
     };
 
     const stopRecording = async () => {
-        if (!recording) return;
-
+        if (!isListening) return;
         setIsListening(false);
-        setProcessingAudio(true);
-
-        try {
-            await recording.stopAndUnloadAsync();
-            const uri = recording.getURI();
-            if (!uri) throw new Error('No recording URI');
-
-            console.log('Recording URI:', uri);
-            
-            const audioData = await FileSystem.readAsStringAsync(uri, {
-                encoding: FileSystem.EncodingType.Base64,
-            });
-            console.log('Audio data length:', audioData.length);
-
-            const fileInfo = await FileSystem.getInfoAsync(uri);
-            console.log('File info:', fileInfo);
-
-            const formData = new FormData();
-            const fileObject = {
-                uri: uri,
-                type: 'audio/m4a',
-                name: 'recording.m4a',
-                _data: audioData,
-                _size: fileInfo.exists ? fileInfo.size || 0 : 0
-            };
-            console.log('File object:', fileObject);
-            
-            formData.append('file', fileObject as any);
-            formData.append('model', 'whisper-1');
-            formData.append('response_format', 'verbose_json');
-            formData.append('language', 'en');
-
-            console.log('Sending request to Whisper API...');
-            const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'multipart/form-data',
-                },
-                body: formData,
-            });
-
-            console.log('Response status:', response.status);
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('API error response:', errorText);
-                throw new Error(`API error: ${response.status} ${errorText}`);
-            }
-
-            const result = await response.json();
-            console.log('API response:', result);
-
-            // Process the transcription with ChatGPT for speaker diarization
-            const diarizationPrompt = `
-                Given this transcription, identify different speakers and format it with speaker labels.
-                The transcription is: "${result.text}"
-                Format each line with "Speaker X:" where X is a number.
-            `;
-
-            const chatResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: 'gpt-3.5-turbo',
-                    messages: [{
-                        role: 'user',
-                        content: diarizationPrompt,
-                    }],
-                }),
-            });
-
-            const diarizedResult = await chatResponse.json();
-            const diarizedText = diarizedResult.choices[0].message.content;
-
-            // Parse the diarized text and update transcripts
-            const lines = diarizedText.split('\n').filter((line: any) => line.trim());
-            const newTranscripts = lines.map((line: any) => {
-                const [speaker, ...textParts] = line.split(':');
-                return {
-                    speaker: speaker.trim(),
-                    text: textParts.join(':').trim(),
-                };
-            });
-
-            setTranscripts(prev => [...prev, ...newTranscripts]);
-
-            // Update active speakers
-            const speakers = new Set(newTranscripts.map((t: any) => t.speaker));
-            setActiveSpeakers(prev => [...new Set([...prev, ...Array.from(speakers)])] as string[]);
-
-        } catch (err) {
-            console.error('Failed to process recording', err);
-        } finally {
-            setProcessingAudio(false);
-            setRecording(null);
-        }
+        await stopAudioRecording();
+        stopTranscription();
     };
 
     const toggleRecording = () => {
-        if (recording) {
+        if (isListening) {
             stopRecording();
         } else {
             startRecording();
@@ -270,12 +279,6 @@ export const VoiceAnalytics: React.FC = () => {
         </View>
     );
 
-    const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 20) return '#ef4444';    // > -40dB (very loud)
-        if (speakerLevel > 10) return '#f97316';    // > -50dB (moderately loud)
-        return '#22c55e';                           // <= -50dB (normal)
-    };
-
     const toggleCollapse = () => {
         setIsCollapsed(!isCollapsed);
         Animated.timing(animatedHeight, {
@@ -283,6 +286,78 @@ export const VoiceAnalytics: React.FC = () => {
             duration: 300,
             useNativeDriver: false,
         }).start();
+    };
+
+    const handleEnrollSpeaker = async (audioBlob: Blob, speakerName: string) => {
+        try {
+            console.log('Starting speaker enrollment for:', speakerName);
+            const profileId = await createIdentificationProfile(speakerName);
+            console.log('Created profile ID:', profileId);
+
+            await enrollSpeakerAudio(profileId, audioBlob);
+            console.log('Successfully enrolled audio for profile:', profileId);
+
+            setProfileIds(prev => [...prev, profileId]);
+            setEnrolledProfiles(prev => ({ ...prev, [profileId]: speakerName }));
+
+            // Clear the speaker name input after successful enrollment
+            setSpeakerName('');
+
+            // Show some feedback to the user (you'll need to implement this UI)
+            alert(`Successfully enrolled ${speakerName}`);
+        } catch (error) {
+            console.error('Failed to enroll speaker:', error);
+            alert('Failed to enroll speaker. Please try again.');
+        }
+    };
+
+    const handleIdentifySpeakers = async (audioBlob: Blob): Promise<string> => {
+        try {
+            if (profileIds.length === 0) {
+                console.log('🎤 Speaker Identification: No enrolled profiles available');
+                return 'Unknown Speaker';
+            }
+
+            const result = await identifySpeakers(audioBlob, profileIds);
+            console.log("🎯 Speaker Identification Result:", {
+                confidence: result?.identifiedProfile?.confidence,
+                profileId: result?.identifiedProfile?.profileId
+            });
+
+            if (result?.identifiedProfile?.profileId) {
+                const profileId = result.identifiedProfile.profileId;
+                const speakerName = enrolledProfiles[profileId] || `Speaker ${profileId}`;
+                console.log(`👤 Identified Speaker: ${speakerName} (Profile ID: ${profileId})`);
+                return speakerName;
+            }
+        } catch (error) {
+            console.error('❌ Speaker identification failed:', error);
+        }
+        return 'Unknown Speaker';
+    };
+
+    const startEnrollmentRecording = async () => {
+        try {
+            const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            setEnrollmentRecording(recording);
+        } catch (error) {
+            console.error('Failed to start enrollment recording:', error);
+        }
+    };
+
+    const stopEnrollmentRecording = async () => {
+        if (!enrollmentRecording) return;
+        try {
+            await enrollmentRecording.stopAndUnloadAsync();
+            const uri = enrollmentRecording.getURI();
+            if (uri) {
+                const audioBlob = await fetch(uri).then(res => res.blob());
+                handleEnrollSpeaker(audioBlob, speakerName);
+            }
+        } catch (error) {
+            console.error('Failed to stop enrollment recording:', error);
+        }
+        setEnrollmentRecording(null);
     };
 
     return (
@@ -299,7 +374,7 @@ export const VoiceAnalytics: React.FC = () => {
                             styles.speakingIndicator,
                             {
                                 backgroundColor: currentSpeaker ?
-                                    (currentSpeaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444') :
+                                    (currentSpeaker === 'Speaker Guest-1' ? speakerLevelColor : '#ef4444') :
                                     '#94a3b8'
                             }
                         ]} />
@@ -311,15 +386,12 @@ export const VoiceAnalytics: React.FC = () => {
                         <TouchableOpacity
                             style={[
                                 styles.button,
-                                { backgroundColor: isListening ? '#ef4444' : '#22c55e' },
-                                processingAudio && { opacity: 0.7 }
+                                { backgroundColor: isListening ? '#ef4444' : '#22c55e' }
                             ]}
                             onPress={toggleRecording}
-                            disabled={processingAudio}
                         >
                             <Text style={styles.buttonText}>
-                                {processingAudio ? 'Processing...' :
-                                    isListening ? 'Stop Recording' : 'Start Recording'}
+                                {isListening ? 'Stop Recording' : 'Start Recording'}
                             </Text>
                         </TouchableOpacity>
                     </View>
@@ -330,7 +402,7 @@ export const VoiceAnalytics: React.FC = () => {
                             <AudioLevelIndicator
                                 level={speakerLevel}
                                 label="Speaker"
-                                color={getVolumeColor(speakerLevel)}
+                                color={speakerLevelColor}
                                 baseline={backgroundLevel}
                             />
                         </View>
@@ -387,223 +459,49 @@ export const VoiceAnalytics: React.FC = () => {
                     </ScrollView>
                 </View>
             </View>
+
+            <View style={styles.enrollmentContainer}>
+                <Text style={styles.enrollmentTitle}>Enroll Speaker</Text>
+                <TextInput
+                    style={styles.input}
+                    placeholder="Enter Speaker Name"
+                    value={speakerName}
+                    onChangeText={setSpeakerName}
+                />
+                <TouchableOpacity
+                    style={styles.enrollButton}
+                    onPress={enrollmentRecording ? stopEnrollmentRecording : startEnrollmentRecording}
+                >
+                    <Text style={styles.enrollButtonText}>
+                        {enrollmentRecording ? 'Stop Enrollment Recording' : 'Start Enrollment Recording'}
+                    </Text>
+                </TouchableOpacity>
+
+                {/* Enrollment modal displaying instructional text and a stop button */}
+                {enrollmentRecording && (
+                    <Modal
+                        visible={true}
+                        transparent={true}
+                        animationType="slide"
+                        onRequestClose={stopEnrollmentRecording}
+                    >
+                        <View style={styles.modalOverlay}>
+                            <View style={styles.modalContainer}>
+                                <ScrollView contentContainerStyle={styles.modalContent}>
+                                    <Text style={styles.modalText}>
+                                        Once upon a time in a land of endless sunshine, the trees whispered secrets of ancient days. The gentle breeze carried the scent of blooming flowers as birds sang in harmony, filling the air with vibrant melodies. I am recording this passage for my speaker enrollment to capture every nuance of my voice—its tone, pace, and clarity. I speak clearly and steadily to ensure that the system can model my unique sound characteristics accurately. Thank you for allowing me to share my voice.
+                                    </Text>
+                                    <TouchableOpacity style={styles.modalStopButton} onPress={stopEnrollmentRecording}>
+                                        <Text style={styles.modalStopButtonText}>Stop Enrollment Recording</Text>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            </View>
+                        </View>
+                    </Modal>
+                )}
+            </View>
         </View>
     );
 };
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f8fafc',
-    },
-    header: {
-        backgroundColor: 'white',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e2e8f0',
-        padding: 16,
-        paddingTop: 48,
-    },
-    headerTitle: {
-        fontSize: 24,
-        fontWeight: '600',
-        color: '#1e293b',
-    },
-    headerSubtitle: {
-        fontSize: 14,
-        color: '#64748b',
-        fontWeight: 'normal',
-    },
-    mainContent: {
-        flex: 1,
-        padding: 16,
-    },
-    leftColumn: {
-        marginBottom: 16,
-    },
-    statusCard: {
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 32,
-        alignItems: 'center',
-        marginBottom: 16,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    speakingIndicator: {
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-        marginBottom: 16,
-    },
-    speakerStatus: {
-        fontSize: 18,
-        color: '#475569',
-        fontWeight: '500',
-        marginBottom: 16,
-    },
-    button: {
-        width: '100%',
-        maxWidth: 300,
-        padding: 12,
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    buttonText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '500',
-    },
-    metricsGrid: {
-        flexDirection: 'row',
-        gap: 16,
-    },
-    metricCard: {
-        flex: 1,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 24,
-        minHeight: 120,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    metricLabel: {
-        color: '#64748b',
-        fontSize: 14,
-        marginBottom: 8,
-    },
-    metricValue: {
-        color: '#1e293b',
-        fontSize: 24,
-        fontWeight: '600',
-    },
-    transcriptContainer: {
-        flex: 1,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 24,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    transcriptTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#1e293b',
-        marginBottom: 8,
-    },
-    collapseHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 8,
-        marginBottom: 8,
-    },
-    collapseHeaderText: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#475569',
-    },
-    collapseIcon: {
-        fontSize: 16,
-        color: '#475569',
-    },
-    activeSpeakersContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginBottom: 16,
-    },
-    activeSpeakerChip: {
-        backgroundColor: '#f1f5f9',
-        borderRadius: 16,
-        paddingVertical: 8,
-        paddingHorizontal: 16,
-        marginRight: 8,
-        marginBottom: 8,
-    },
-    activeSpeakerText: {
-        color: '#475569',
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    transcriptsList: {
-        flex: 1,
-    },
-    transcriptItem: {
-        marginBottom: 16,
-    },
-    transcriptSpeaker: {
-        fontSize: 14,
-        fontWeight: '500',
-        marginBottom: 4,
-    },
-    transcriptText: {
-        color: '#475569',
-        backgroundColor: '#f8fafc',
-        padding: 12,
-        borderRadius: 8,
-        fontSize: 14,
-    },
-    audioIndicator: {
-        marginTop: 8,
-    },
-    audioLabel: {
-        marginBottom: 5,
-        color: '#475569',
-        fontSize: 14,
-    },
-    audioBar: {
-        height: 12,
-        backgroundColor: '#f1f5f9',
-        borderRadius: 6,
-        overflow: 'hidden',
-        position: 'relative',
-    },
-    audioLevel: {
-        height: '100%',
-        position: 'absolute',
-    },
-    baselineMark: {
-        position: 'absolute',
-        top: 0,
-        bottom: 0,
-        width: 2,
-        backgroundColor: '#94a3b8',
-        opacity: 0.8,
-        zIndex: 2,
-    },
-    baselineArea: {
-        position: 'absolute',
-        height: '100%',
-        backgroundColor: '#e2e8f0',
-        opacity: 0.5,
-        left: 0,
-    },
-});
 
 export default VoiceAnalytics;
