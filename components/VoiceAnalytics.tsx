@@ -3,11 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, TextInput, Modal } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
-import { SPEECH_KEY, SPEECH_REGION } from '@/env';
-import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
-import { createIdentificationProfile, enrollSpeakerAudio, identifySpeakers } from '@/services/voiceAnalyticsApi';
-import { styles } from './VoiceAnalytics.styles';
+import { SPEECH_KEY, SPEECH_REGION } from '../env';
 
 export const VoiceAnalytics: React.FC = () => {
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
