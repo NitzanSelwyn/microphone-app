@@ -83,7 +83,7 @@ export const VoiceAnalytics: React.FC = () => {
                     // Update background level when no one is speaking
                     if (currentSpeaker === null) {
                         setBackgroundLevel(movingAverage);
-                        setSpeakerLevel(0);
+                        //setSpeakerLevel(0);
                     } else {
                         debugger;
                         // When someone is speaking, calculate the differential from background
@@ -132,7 +132,12 @@ export const VoiceAnalytics: React.FC = () => {
                     text: text
                 }]);
 
-                setTimeout(() => setCurrentSpeaker(null), 5000);
+                // Set a timeout to reset speaker and update baseline
+                setTimeout(() => {
+                    setCurrentSpeaker(null);
+                    calculateBaseline(); // Update baseline after speech ends
+                    setSpeakerLevel(0); // Reset speaker level explicitly
+                }, 5000);
             }
         };
 
@@ -194,8 +199,8 @@ export const VoiceAnalytics: React.FC = () => {
     );
 
     const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 20) return '#ef4444';    // > -40dB (very loud)
-        if (speakerLevel > 10) return '#f97316';    // > -50dB (moderately loud)
+        if (speakerLevel > 50) return '#ef4444';    // > -40dB (very loud)
+        if (speakerLevel > 30) return '#f97316';    // > -50dB (moderately loud)
         return '#22c55e';                           // <= -50dB (normal)
     };
 
