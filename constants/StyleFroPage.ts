@@ -6,6 +6,12 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         backgroundColor: '#f8fafc',
         padding: 16,
     },
+    scrollContainer: {
+        flex: 1,
+    },
+    scrollContent: {
+        flexGrow: 1,
+    },
     header: {
         flexDirection: 'row',
         justifyContent: 'flex-end',
@@ -33,19 +39,55 @@ export const voiceAnalyticsStyles = StyleSheet.create({
             android: {
                 elevation: 2,
             },
+            default: {
+                padding: 24,
+            }
         }),
     },
     speakingIndicator: {
-        width: 120,
-        height: 120,
-        borderRadius: 60,
+        ...Platform.select({
+            web: {
+                width: 120,
+                height: 120,
+                borderRadius: 60,
+            },
+            default: {
+                width: 100,
+                height: 100,
+                borderRadius: 50,
+            }
+        }),
         marginBottom: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    speakingBadge: {
+        position: 'absolute',
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+        borderRadius: 12,
+    },
+    speakingBadgeText: {
+        color: 'white',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
     speakerStatus: {
-        fontSize: 18,
         color: '#475569',
         fontWeight: '500',
         marginBottom: 16,
+        textAlign: 'center',
+        ...Platform.select({
+            web: {
+                fontSize: 18,
+            },
+            default: {
+                fontSize: 16,
+            }
+        }),
     },
     button: {
         width: '100%',
@@ -59,20 +101,63 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
-    metricsGrid: {
-        flexDirection: 'row',
-        gap: 16,
-        flex: 1,
-    },
     metricsContainer: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 20,
+        ...Platform.select({
+            web: {
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: 20,
+            },
+            default: {
+                flexDirection: 'column',
+                gap: 16,
+            },
+        }),
+    },
+    metricsContainerNarrow: {
+        flexDirection: 'column',
+        gap: 16,
+    },
+    metricsGrid: {
+        ...Platform.select({
+            web: {
+                flexDirection: 'row',
+                gap: 16,
+                flex: 1,
+            },
+            default: {
+                flexDirection: 'column',
+                gap: 16,
+                width: '100%',
+            },
+        }),
+    },
+    metricsGridNarrow: {
+        flexDirection: 'column',
+        gap: 16,
+        width: '100%',
     },
     legendWrapper: {
-        marginLeft: 16,
-        maxWidth: 300,
+        ...Platform.select({
+            web: {
+                marginLeft: 16,
+                maxWidth: 300,
+            },
+            default: {
+                marginTop: 8,
+                marginBottom: 16,
+                alignSelf: 'center',
+                width: '100%',
+                maxWidth: 400,
+            },
+        }),
+    },
+    legendWrapperNarrow: {
+        marginLeft: 0,
+        marginTop: 16,
+        width: '100%',
+        maxWidth: undefined,
     },
     metricCard: {
         flex: 1,
@@ -92,6 +177,10 @@ export const voiceAnalyticsStyles = StyleSheet.create({
             },
         }),
     },
+    metricCardNarrow: {
+        flex: 0,
+        marginBottom: 12,
+    },
     metricLabel: {
         color: '#64748b',
         fontSize: 14,
@@ -107,6 +196,7 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         backgroundColor: 'white',
         borderRadius: 16,
         padding: 24,
+        marginTop: 16,
         ...Platform.select({
             ios: {
                 shadowColor: '#000',
@@ -179,11 +269,30 @@ export const voiceAnalyticsStyles = StyleSheet.create({
     },
     audioIndicator: {
         marginTop: 8,
+        width: '100%',
+    },
+    audioLabelContainer: {
+        marginBottom: 5,
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        ...Platform.select({
+            web: {
+                flexDirection: 'row',
+            },
+            default: {
+                flexDirection: 'column',
+            }
+        }),
     },
     audioLabel: {
-        marginBottom: 5,
         color: '#475569',
         fontSize: 14,
+        flexWrap: 'wrap',
+    },
+    audioLabelSmall: {
+        color: '#64748b',
+        fontSize: 12,
+        marginTop: 2,
     },
     audioBar: {
         height: 12,
@@ -191,6 +300,7 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         borderRadius: 6,
         overflow: 'hidden',
         position: 'relative',
+        marginTop: 4,
     },
     audioLevel: {
         height: '100%',
@@ -216,7 +326,14 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         backgroundColor: 'white',
         borderRadius: 12,
         padding: 12,
-        width: 250,
+        ...Platform.select({
+            web: {
+                width: 250,
+            },
+            default: {
+                width: '100%',
+            },
+        }),
         ...Platform.select({
             ios: {
                 shadowColor: '#000',

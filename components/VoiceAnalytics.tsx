@@ -1,12 +1,15 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, useWindowDimensions } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
 
 export const VoiceAnalytics: React.FC = () => {
+    const { width } = useWindowDimensions();
+    const isNarrowScreen = width < 700;
+    
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
     const [isListening, setIsListening] = useState(false);
     const [transcripts, setTranscripts] = useState<{ speaker: string, text: string }[]>([]);
@@ -15,6 +18,7 @@ export const VoiceAnalytics: React.FC = () => {
     const [speakerLevel, setSpeakerLevel] = useState<number>(0);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const animatedHeight = useRef(new Animated.Value(1)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
     const firstSpeakerRef = useRef<string | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -22,6 +26,29 @@ export const VoiceAnalytics: React.FC = () => {
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const baselineNoiseRef = useRef<number>(0);
     const recentNoiseLevelsRef = useRef<number[]>([]);
+
+    // Create pulsing animation when speaking
+    useEffect(() => {
+        if (currentSpeaker) {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, {
+                        toValue: 1.1,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(pulseAnim, {
+                        toValue: 1,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                ])
+            ).start();
+        } else {
+            // Reset animation when not speaking
+            pulseAnim.setValue(1);
+        }
+    }, [currentSpeaker, pulseAnim]);
 
     const calculateAudioLevel = (dataArray: Uint8Array): number => {
         // Check if all values are very low (likely microphone is off)
@@ -194,10 +221,16 @@ export const VoiceAnalytics: React.FC = () => {
         baseline?: number | null
     }) => (
         <View style={styles.audioIndicator}>
-            <Text style={styles.audioLabel}>
-                {label}: {level}dB
-                {baseline !== null && ` (Baseline: ${baseline}dB)`}
-            </Text>
+            <View style={styles.audioLabelContainer}>
+                <Text style={styles.audioLabel}>
+                    {label}: {level}dB
+                </Text>
+                {baseline !== null && (
+                    <Text style={styles.audioLabelSmall}>
+                        Baseline: {baseline}dB
+                    </Text>
+                )}
+            </View>
             <View style={styles.audioBar}>
                 {baseline !== null && (
                     <>
@@ -222,28 +255,32 @@ export const VoiceAnalytics: React.FC = () => {
     const SoundLevelLegend = () => (
         <View style={styles.legendContainer}>
             <Text style={styles.legendTitle}>Sound Level Reference</Text>
-            
-            {/* Sound level visual representation */}
+            <Text style={styles.legendDescription}>
+                Showing relative audio level in decibels (dB)
+            </Text>
+
             <View style={styles.soundLevelBar}>
                 <View style={styles.soundLevelGradient}>
                     <View style={[styles.soundLevelSegment, { backgroundColor: '#22c55e' }]} />
                     <View style={[styles.soundLevelSegment, { backgroundColor: '#f97316' }]} />
                     <View style={[styles.soundLevelSegment, { backgroundColor: '#ef4444' }]} />
                 </View>
+
                 <View style={styles.tickMarksContainer}>
                     <View style={styles.tickMark} />
                     <View style={styles.tickMark} />
                     <View style={styles.tickMark} />
                     <View style={styles.tickMark} />
                 </View>
+
                 <View style={styles.soundLevelLabels}>
                     <Text style={styles.soundLevelLabel}>-60dB</Text>
-                    <Text style={styles.soundLevelLabel}>-30dB</Text>
-                    <Text style={styles.soundLevelLabel}>-10dB</Text>
+                    <Text style={styles.soundLevelLabel}>-40dB</Text>
+                    <Text style={styles.soundLevelLabel}>-20dB</Text>
                     <Text style={styles.soundLevelLabel}>0dB</Text>
                 </View>
             </View>
-            
+
             <View style={styles.legendItems}>
                 <View style={styles.legendItem}>
                     <View style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
@@ -278,106 +315,116 @@ export const VoiceAnalytics: React.FC = () => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.mainContent}>
-                <View style={styles.leftColumn}>
+            <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
+                <View style={styles.mainContent}>
+                    <View style={styles.leftColumn}>
 
-                    <View style={[
-                        styles.statusCard,
-                        currentSpeaker === 'Speaker Guest-1' && speakerLevel < backgroundLevel * 0.5 && {
-                            backgroundColor: '#fee2e2' // Light red background
-                        }
-                    ]}>
                         <View style={[
-                            styles.speakingIndicator,
-                            {
-                                backgroundColor: currentSpeaker ?
-                                    (currentSpeaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444') :
-                                    '#94a3b8'
+                            styles.statusCard,
+                            currentSpeaker === 'Speaker Guest-1' && speakerLevel < backgroundLevel * 0.5 && {
+                                backgroundColor: '#fee2e2' // Light red background
                             }
-                        ]} />
+                        ]}>
+                            <Animated.View style={[
+                                styles.speakingIndicator,
+                                {
+                                    backgroundColor: currentSpeaker ?
+                                        (currentSpeaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444') :
+                                        '#94a3b8',
+                                    transform: [{ scale: currentSpeaker ? pulseAnim : 1 }]
+                                }
+                            ]}>
+                                {currentSpeaker && (
+                                    <View style={styles.speakingBadge}>
+                                        <Text style={styles.speakingBadgeText}>LIVE</Text>
+                                    </View>
+                                )}
+                            </Animated.View>
 
-                        <Text style={styles.speakerStatus}>
-                            {currentSpeaker || 'No one speaking'}
-                        </Text>
-
-                        <TouchableOpacity
-                            style={[styles.button, { backgroundColor: isListening ? '#ef4444' : '#22c55e' }]}
-                            onPress={() => !isListening && startListening()}
-                        >
-                            <Text style={styles.buttonText}>
-                                {isListening ? 'Stop Recording' : 'Start Recording'}
+                            <Text style={styles.speakerStatus}>
+                                {currentSpeaker || 'No one speaking'}
                             </Text>
-                        </TouchableOpacity>
-                    </View>
 
-                    <View style={styles.metricsContainer}>
-                        <View style={styles.metricsGrid}>
-                            <View style={styles.metricCard}>
-                                <Text style={styles.metricLabel}>Speaker Level</Text>
-                                <AudioLevelIndicator
-                                    level={speakerLevel}
-                                    label="Speaker"
-                                    color={getVolumeColor(speakerLevel)}
-                                    baseline={backgroundLevel}
-                                />
+                            <TouchableOpacity
+                                style={[styles.button, { backgroundColor: isListening ? '#ef4444' : '#22c55e' }]}
+                                onPress={() => !isListening && startListening()}
+                            >
+                                <Text style={styles.buttonText}>
+                                    {isListening ? 'Stop Recording' : 'Start Recording'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={[styles.metricsContainer, isNarrowScreen ? styles.metricsContainerNarrow : {}]}>
+                            <View style={[styles.metricsGrid, isNarrowScreen ? styles.metricsGridNarrow : {}]}>
+                                <View style={[styles.metricCard, isNarrowScreen ? styles.metricCardNarrow : {}]}>
+                                    <Text style={styles.metricLabel}>Speaker Level</Text>
+                                    <AudioLevelIndicator
+                                        level={speakerLevel}
+                                        label="Speaker"
+                                        color={getVolumeColor(speakerLevel)}
+                                        baseline={backgroundLevel}
+                                    />
+                                </View>
+
+                                <View style={[styles.metricCard, isNarrowScreen ? styles.metricCardNarrow : {}]}>
+                                    <Text style={styles.metricLabel}>Background Level</Text>
+                                    <AudioLevelIndicator
+                                        level={backgroundLevel}
+                                        label="Background"
+                                        color="#64748b"
+                                    />
+                                </View>
                             </View>
-
-                            <View style={styles.metricCard}>
-                                <Text style={styles.metricLabel}>Background Level</Text>
-                                <AudioLevelIndicator
-                                    level={backgroundLevel}
-                                    label="Background"
-                                    color="#64748b"
-                                />
+                            
+                            <View style={[styles.legendWrapper, isNarrowScreen ? styles.legendWrapperNarrow : {}]}>
+                                <SoundLevelLegend />
                             </View>
                         </View>
-                        
-                        <SoundLevelLegend />
+
+                        <View style={styles.transcriptContainer}>
+                            <Text style={styles.transcriptTitle}>Conversation History</Text>
+
+                            <TouchableOpacity onPress={toggleCollapse} style={styles.collapseHeader}>
+                                <Text style={styles.collapseHeaderText}>Active Speakers</Text>
+                                <Text style={styles.collapseIcon}>{isCollapsed ? '▼' : '▲'}</Text>
+                            </TouchableOpacity>
+
+                            <Animated.View style={[
+                                styles.activeSpeakersContainer,
+                                {
+                                    maxHeight: animatedHeight.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0, 200],
+                                    }),
+                                    opacity: animatedHeight,
+                                    overflow: 'hidden',
+                                }
+                            ]}>
+                                {activeSpeakers.map((speaker, index) => (
+                                    <View key={index} style={styles.activeSpeakerChip}>
+                                        <Text style={styles.activeSpeakerText}>{speaker}</Text>
+                                    </View>
+                                ))}
+                            </Animated.View>
+
+                            <View style={styles.transcriptsList}>
+                                {transcripts.map((transcript, index) => (
+                                    <View key={index} style={styles.transcriptItem}>
+                                        <Text style={[
+                                            styles.transcriptSpeaker,
+                                            { color: transcript.speaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444' }
+                                        ]}>
+                                            {transcript.speaker}
+                                        </Text>
+                                        <Text style={styles.transcriptText}>{transcript.text}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
                     </View>
-
                 </View>
-
-                <View style={styles.transcriptContainer}>
-                    <Text style={styles.transcriptTitle}>Conversation History</Text>
-
-                    <TouchableOpacity onPress={toggleCollapse} style={styles.collapseHeader}>
-                        <Text style={styles.collapseHeaderText}>Active Speakers</Text>
-                        <Text style={styles.collapseIcon}>{isCollapsed ? '▼' : '▲'}</Text>
-                    </TouchableOpacity>
-
-                    <Animated.View style={[
-                        styles.activeSpeakersContainer,
-                        {
-                            maxHeight: animatedHeight.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0, 200],
-                            }),
-                            opacity: animatedHeight,
-                            overflow: 'hidden',
-                        }
-                    ]}>
-                        {activeSpeakers.map((speaker, index) => (
-                            <View key={index} style={styles.activeSpeakerChip}>
-                                <Text style={styles.activeSpeakerText}>{speaker}</Text>
-                            </View>
-                        ))}
-                    </Animated.View>
-
-                    <ScrollView style={styles.transcriptsList}>
-                        {transcripts.map((transcript, index) => (
-                            <View key={index} style={styles.transcriptItem}>
-                                <Text style={[
-                                    styles.transcriptSpeaker,
-                                    { color: transcript.speaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444' }
-                                ]}>
-                                    {transcript.speaker}
-                                </Text>
-                                <Text style={styles.transcriptText}>{transcript.text}</Text>
-                            </View>
-                        ))}
-                    </ScrollView>
-                </View>
-            </View>
+            </ScrollView>
         </View>
     );
 };
