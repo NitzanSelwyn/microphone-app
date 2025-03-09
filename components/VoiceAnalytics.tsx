@@ -15,6 +15,7 @@ export const VoiceAnalytics: React.FC = () => {
     const [speakerLevel, setSpeakerLevel] = useState<number>(0);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const animatedHeight = useRef(new Animated.Value(1)).current;
+    const firstSpeakerRef = useRef<string | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
@@ -23,6 +24,12 @@ export const VoiceAnalytics: React.FC = () => {
     const recentNoiseLevelsRef = useRef<number[]>([]);
 
     const calculateAudioLevel = (dataArray: Uint8Array): number => {
+        // Check if all values are very low (likely microphone is off)
+        const maxValue = Math.max(...Array.from(dataArray));
+        if (maxValue < 5) { // Threshold for silent/off microphone
+            return 0;
+        }
+        
         // Calculate RMS (Root Mean Square) of the audio data
         const rms = Math.sqrt(
             dataArray.reduce((sum, val) => sum + (val * val), 0) / dataArray.length
@@ -49,9 +56,13 @@ export const VoiceAnalytics: React.FC = () => {
         const windowSize = 30; // Use last 0.5 seconds of data (assuming 60fps)
         if (recentNoiseLevelsRef.current.length > 0) {
             const newBaseline = calculateMovingAverage(recentNoiseLevelsRef.current, windowSize);
-            baselineNoiseRef.current = newBaseline;
-            setBackgroundLevel(newBaseline); // Update the background level state
-            console.log('New baseline established:', newBaseline);
+            
+            // Only update baseline if it's a meaningful value (above 5) or actually 0
+            if (newBaseline === 0 || newBaseline > 5) {
+                baselineNoiseRef.current = newBaseline;
+                setBackgroundLevel(newBaseline); // Update the background level state
+                console.log('New baseline established:', newBaseline);
+            }
         }
     };
 
@@ -117,33 +128,42 @@ export const VoiceAnalytics: React.FC = () => {
 
             if (text.trim()) {
                 const speaker = `Speaker ${speakerId}`;
-                if (speaker === 'Speaker Guest-1') {
-                    calculateBaseline();
+                
+                // Only set the first speaker if not already set
+                if (!firstSpeakerRef.current) {
+                    firstSpeakerRef.current = speaker;
+                    setActiveSpeakers([speaker]);
+                    
+                    if (speaker === 'Speaker Guest-1') {
+                        calculateBaseline();
+                    }
                 }
+                
+                // Only process transcripts from the first speaker
+                if (speaker === firstSpeakerRef.current) {
+                    setCurrentSpeaker(speaker);
+                    
+                    console.log(speaker, text);
 
-                setCurrentSpeaker(speaker);
-                if (!activeSpeakers.includes(speaker)) {
-                    setActiveSpeakers(prev => [...prev, speaker]);
+                    setTranscripts(prev => [...prev, {
+                        speaker: speaker,
+                        text: text
+                    }]);
+
+                    // Set a timeout to reset speaker and update baseline
+                    setTimeout(() => {
+                        setCurrentSpeaker(null);
+                        calculateBaseline(); // Update baseline after speech ends
+                        setSpeakerLevel(0); // Reset speaker level explicitly
+                    }, 5000);
                 }
-
-                console.log(speaker, text);
-
-                setTranscripts(prev => [...prev, {
-                    speaker: speaker,
-                    text: text
-                }]);
-
-                // Set a timeout to reset speaker and update baseline
-                setTimeout(() => {
-                    setCurrentSpeaker(null);
-                    calculateBaseline(); // Update baseline after speech ends
-                    setSpeakerLevel(0); // Reset speaker level explicitly
-                }, 5000);
             }
         };
 
         transcriber.sessionStarted = () => {
             startAudioMonitoring();
+            // Reset the first speaker when starting a new session
+            firstSpeakerRef.current = null;
         };
 
         transcriber.startTranscribingAsync(
