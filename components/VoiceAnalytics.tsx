@@ -1,9 +1,10 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
+import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
 
 export const VoiceAnalytics: React.FC = () => {
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
@@ -198,6 +199,48 @@ export const VoiceAnalytics: React.FC = () => {
         </View>
     );
 
+    const SoundLevelLegend = () => (
+        <View style={styles.legendContainer}>
+            <Text style={styles.legendTitle}>Sound Level Reference</Text>
+            
+            {/* Sound level visual representation */}
+            <View style={styles.soundLevelBar}>
+                <View style={styles.soundLevelGradient}>
+                    <View style={[styles.soundLevelSegment, { backgroundColor: '#22c55e' }]} />
+                    <View style={[styles.soundLevelSegment, { backgroundColor: '#f97316' }]} />
+                    <View style={[styles.soundLevelSegment, { backgroundColor: '#ef4444' }]} />
+                </View>
+                <View style={styles.tickMarksContainer}>
+                    <View style={styles.tickMark} />
+                    <View style={styles.tickMark} />
+                    <View style={styles.tickMark} />
+                    <View style={styles.tickMark} />
+                </View>
+                <View style={styles.soundLevelLabels}>
+                    <Text style={styles.soundLevelLabel}>-60dB</Text>
+                    <Text style={styles.soundLevelLabel}>-30dB</Text>
+                    <Text style={styles.soundLevelLabel}>-10dB</Text>
+                    <Text style={styles.soundLevelLabel}>0dB</Text>
+                </View>
+            </View>
+            
+            <View style={styles.legendItems}>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
+                    <Text style={styles.legendText}>Quiet (-60 to -30dB)</Text>
+                </View>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: '#f97316' }]} />
+                    <Text style={styles.legendText}>Moderate (-30 to -10dB)</Text>
+                </View>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
+                    <Text style={styles.legendText}>Loud (-10 to 0dB)</Text>
+                </View>
+            </View>
+        </View>
+    );
+
     const getVolumeColor = (speakerLevel: number): string => {
         if (speakerLevel > 50) return '#ef4444';    // > -40dB (very loud)
         if (speakerLevel > 30) return '#f97316';    // > -50dB (moderately loud)
@@ -217,6 +260,7 @@ export const VoiceAnalytics: React.FC = () => {
         <View style={styles.container}>
             <View style={styles.mainContent}>
                 <View style={styles.leftColumn}>
+
                     <View style={[
                         styles.statusCard,
                         currentSpeaker === 'Speaker Guest-1' && speakerLevel < backgroundLevel * 0.5 && {
@@ -246,26 +290,31 @@ export const VoiceAnalytics: React.FC = () => {
                         </TouchableOpacity>
                     </View>
 
-                    <View style={styles.metricsGrid}>
-                        <View style={styles.metricCard}>
-                            <Text style={styles.metricLabel}>Speaker Level</Text>
-                            <AudioLevelIndicator
-                                level={speakerLevel}
-                                label="Speaker"
-                                color={getVolumeColor(speakerLevel)}
-                                baseline={backgroundLevel}
-                            />
-                        </View>
+                    <View style={styles.metricsContainer}>
+                        <View style={styles.metricsGrid}>
+                            <View style={styles.metricCard}>
+                                <Text style={styles.metricLabel}>Speaker Level</Text>
+                                <AudioLevelIndicator
+                                    level={speakerLevel}
+                                    label="Speaker"
+                                    color={getVolumeColor(speakerLevel)}
+                                    baseline={backgroundLevel}
+                                />
+                            </View>
 
-                        <View style={styles.metricCard}>
-                            <Text style={styles.metricLabel}>Background Level</Text>
-                            <AudioLevelIndicator
-                                level={backgroundLevel}
-                                label="Background"
-                                color="#64748b"
-                            />
+                            <View style={styles.metricCard}>
+                                <Text style={styles.metricLabel}>Background Level</Text>
+                                <AudioLevelIndicator
+                                    level={backgroundLevel}
+                                    label="Background"
+                                    color="#64748b"
+                                />
+                            </View>
                         </View>
+                        
+                        <SoundLevelLegend />
                     </View>
+
                 </View>
 
                 <View style={styles.transcriptContainer}>
@@ -312,220 +361,5 @@ export const VoiceAnalytics: React.FC = () => {
         </View>
     );
 };
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f8fafc',
-    },
-    header: {
-        backgroundColor: 'white',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e2e8f0',
-        padding: 16,
-        paddingTop: 48,
-    },
-    headerTitle: {
-        fontSize: 24,
-        fontWeight: '600',
-        color: '#1e293b',
-    },
-    headerSubtitle: {
-        fontSize: 14,
-        color: '#64748b',
-        fontWeight: 'normal',
-    },
-    mainContent: {
-        flex: 1,
-        padding: 16,
-    },
-    leftColumn: {
-        marginBottom: 16,
-    },
-    statusCard: {
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 32,
-        alignItems: 'center',
-        marginBottom: 16,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    speakingIndicator: {
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-        marginBottom: 16,
-    },
-    speakerStatus: {
-        fontSize: 18,
-        color: '#475569',
-        fontWeight: '500',
-        marginBottom: 16,
-    },
-    button: {
-        width: '100%',
-        maxWidth: 300,
-        padding: 12,
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    buttonText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '500',
-    },
-    metricsGrid: {
-        flexDirection: 'row',
-        gap: 16,
-    },
-    metricCard: {
-        flex: 1,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 24,
-        minHeight: 120,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    metricLabel: {
-        color: '#64748b',
-        fontSize: 14,
-        marginBottom: 8,
-    },
-    metricValue: {
-        color: '#1e293b',
-        fontSize: 24,
-        fontWeight: '600',
-    },
-    transcriptContainer: {
-        flex: 1,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 24,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.1,
-                shadowRadius: 2,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    transcriptTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#1e293b',
-        marginBottom: 8,
-    },
-    collapseHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 8,
-        marginBottom: 8,
-    },
-    collapseHeaderText: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#475569',
-    },
-    collapseIcon: {
-        fontSize: 16,
-        color: '#475569',
-    },
-    activeSpeakersContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginBottom: 16,
-    },
-    activeSpeakerChip: {
-        backgroundColor: '#f1f5f9',
-        borderRadius: 16,
-        paddingVertical: 8,
-        paddingHorizontal: 16,
-        marginRight: 8,
-        marginBottom: 8,
-    },
-    activeSpeakerText: {
-        color: '#475569',
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    transcriptsList: {
-        flex: 1,
-    },
-    transcriptItem: {
-        marginBottom: 16,
-    },
-    transcriptSpeaker: {
-        fontSize: 14,
-        fontWeight: '500',
-        marginBottom: 4,
-    },
-    transcriptText: {
-        color: '#475569',
-        backgroundColor: '#f8fafc',
-        padding: 12,
-        borderRadius: 8,
-        fontSize: 14,
-    },
-    audioIndicator: {
-        marginTop: 8,
-    },
-    audioLabel: {
-        marginBottom: 5,
-        color: '#475569',
-        fontSize: 14,
-    },
-    audioBar: {
-        height: 12,
-        backgroundColor: '#f1f5f9',
-        borderRadius: 6,
-        overflow: 'hidden',
-        position: 'relative',
-    },
-    audioLevel: {
-        height: '100%',
-        position: 'absolute',
-    },
-    baselineMark: {
-        position: 'absolute',
-        top: 0,
-        bottom: 0,
-        width: 2,
-        backgroundColor: '#94a3b8',
-        opacity: 0.8,
-        zIndex: 2,
-    },
-    baselineArea: {
-        position: 'absolute',
-        height: '100%',
-        backgroundColor: '#e2e8f0',
-        opacity: 0.5,
-        left: 0,
-    },
-});
 
 export default VoiceAnalytics;
