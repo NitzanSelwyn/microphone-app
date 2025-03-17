@@ -138,10 +138,10 @@ export const VoiceAnalytics: React.FC = () => {
     const startAudioMonitoring = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
+
             // Clean up any existing audio context
             cleanupAudioResources();
-            
+
             audioContextRef.current = new AudioContext();
             analyserRef.current = audioContextRef.current.createAnalyser();
             sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
@@ -156,7 +156,7 @@ export const VoiceAnalytics: React.FC = () => {
                 if (!analyserRef.current) {
                     return;
                 }
-                
+
                 analyserRef.current.getByteFrequencyData(dataArray);
                 const currentLevel = calculateAudioLevel(dataArray);
 
@@ -174,7 +174,7 @@ export const VoiceAnalytics: React.FC = () => {
                     // Smooth transitions by averaging with previous value
                     return Math.round((prevLevel + movingAverage) / 2);
                 });
-                
+
                 // Ensure continuous updates regardless of isListening state
                 requestAnimationFrame(updateLevels);
             };
@@ -190,10 +190,10 @@ export const VoiceAnalytics: React.FC = () => {
 
     const startListening = async () => {
         if (isInitializing) return;
-        
+
         setIsInitializing(true);
         setError(null);
-        
+
         try {
             const speechConfig = speechsdk.SpeechConfig.fromSubscription(
                 SPEECH_KEY,
@@ -230,29 +230,29 @@ export const VoiceAnalytics: React.FC = () => {
 
                     if (speaker === firstSpeakerRef.current) {
                         setCurrentSpeaker(speaker);
-                        
+
                         // Get the raw audio level
                         const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
-                        
+
                         // Make sure we have a meaningful differential value
                         // Using max with a minimum value to ensure we display something
                         const minDisplayValue = 15; // Ensure we have at least a small visible bar
                         let differential = Math.max(0, currentNoise - baselineNoiseRef.current);
-                        
+
                         // If we're actually speaking, ensure a minimum level is shown
                         if (currentNoise > 0) {
                             differential = Math.max(differential, minDisplayValue);
                         }
-                        
-                        console.log('Speaker levels:', { 
+
+                        console.log('Speaker levels:', {
                             currentNoise,
                             baseline: baselineNoiseRef.current,
                             differential
                         });
-                        
+
                         // Update speaker level
                         setSpeakerLevel(differential);
-                        
+
                         setTranscripts(prev => [...prev, {
                             speaker: speaker,
                             text: text
@@ -273,7 +273,7 @@ export const VoiceAnalytics: React.FC = () => {
 
             await transcriber.startTranscribingAsync();
             setIsListening(true);
-            
+
             // Start audio monitoring immediately after starting transcription
             startAudioMonitoring();
         } catch (error) {
@@ -356,25 +356,25 @@ export const VoiceAnalytics: React.FC = () => {
                 </View>
 
                 <View style={styles.soundLevelLabels}>
-                    <Text style={styles.soundLevelLabel}>-60dB</Text>
-                    <Text style={styles.soundLevelLabel}>-40dB</Text>
-                    <Text style={styles.soundLevelLabel}>-20dB</Text>
                     <Text style={styles.soundLevelLabel}>0dB</Text>
+                    <Text style={styles.soundLevelLabel}>20dB</Text>
+                    <Text style={styles.soundLevelLabel}>40dB</Text>
+                    <Text style={styles.soundLevelLabel}>60dB</Text>
                 </View>
             </View>
 
             <View style={styles.legendItems}>
                 <View style={styles.legendItem}>
                     <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.QUIET }]} />
-                    <Text style={styles.legendText}>Quiet (-60 to -30dB)</Text>
+                    <Text style={styles.legendText}>Quiet (0dB to 10dB)</Text>
                 </View>
                 <View style={styles.legendItem}>
                     <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.MODERATE }]} />
-                    <Text style={styles.legendText}>Moderate (-30 to -10dB)</Text>
+                    <Text style={styles.legendText}>Moderate (10dB to 30dB)</Text>
                 </View>
                 <View style={styles.legendItem}>
                     <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.LOUD }]} />
-                    <Text style={styles.legendText}>Loud (-10 to 0dB)</Text>
+                    <Text style={styles.legendText}>Loud (30dB to 60dB)</Text>
                 </View>
             </View>
         </View>
