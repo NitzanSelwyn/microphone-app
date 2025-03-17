@@ -1,7 +1,7 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, useWindowDimensions, TextInput, Modal } from 'react-native';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
@@ -52,6 +52,11 @@ export const VoiceAnalytics: React.FC = () => {
     const [isInitializing, setIsInitializing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const cleanupRef = useRef<(() => void) | null>(null);
+
+    // Add state for the name modal
+    const [nameModalVisible, setNameModalVisible] = useState<boolean>(true);
+    const [userName, setUserName] = useState<string>('');
+    const [tempName, setTempName] = useState<string>('');
 
     // Create pulsing animation when speaking
     useEffect(() => {
@@ -218,10 +223,11 @@ export const VoiceAnalytics: React.FC = () => {
 
                 if (text.trim()) {
                     const speaker = `Speaker ${speakerId}`;
+                    const displaySpeaker = getSpeakerDisplayName(speaker);
 
                     if (!firstSpeakerRef.current) {
                         firstSpeakerRef.current = speaker;
-                        setActiveSpeakers([speaker]);
+                        setActiveSpeakers([displaySpeaker]);
 
                         if (speaker === 'Speaker Guest-1') {
                             calculateBaseline();
@@ -229,7 +235,7 @@ export const VoiceAnalytics: React.FC = () => {
                     }
 
                     if (speaker === firstSpeakerRef.current) {
-                        setCurrentSpeaker(speaker);
+                        setCurrentSpeaker(displaySpeaker);
 
                         // Get the raw audio level
                         const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
@@ -254,7 +260,7 @@ export const VoiceAnalytics: React.FC = () => {
                         setSpeakerLevel(differential);
 
                         setTranscripts(prev => [...prev, {
-                            speaker: speaker,
+                            speaker: displaySpeaker,
                             text: text
                         }]);
 
@@ -395,14 +401,69 @@ export const VoiceAnalytics: React.FC = () => {
         }).start();
     };
 
+    const getSpeakerDisplayName = (speakerId: string): string => {
+        if (speakerId === 'Speaker Guest-1' && userName) {
+            return `Speaker ${userName}`;
+        }
+        return speakerId;
+    };
+    
+    const handleNameSubmit = () => {
+        if (tempName.trim()) {
+            setUserName(tempName.trim());
+        }
+        setNameModalVisible(false);
+    };
+
     return (
         <View style={styles.container}>
+            {/* Name Input Modal */}
+            <Modal
+                transparent={true}
+                visible={nameModalVisible}
+                animationType="fade"
+                onRequestClose={() => setNameModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Welcome to Voice Analytics</Text>
+                        <Text style={styles.modalDescription}>
+                            Please enter your name to personalize your experience
+                        </Text>
+                        
+                        <TextInput
+                            style={styles.nameInput}
+                            placeholder="Enter your name"
+                            value={tempName}
+                            onChangeText={setTempName}
+                            autoFocus
+                        />
+                        
+                        <View style={styles.modalButtons}>
+                            {/* <TouchableOpacity 
+                                style={[styles.modalButton, styles.skipButton]} 
+                                onPress={() => setNameModalVisible(false)}
+                            >
+                                <Text style={styles.skipButtonText}>Skip</Text>
+                            </TouchableOpacity> */}
+                            
+                            <TouchableOpacity 
+                                style={[styles.modalButton, styles.submitButton]}
+                                onPress={handleNameSubmit}
+                            >
+                                <Text style={styles.submitButtonText}>Continue</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>
                     <View style={styles.leftColumn}>
                         <View style={[
                             styles.statusCard,
-                            currentSpeaker === 'Speaker Guest-1' && {
+                            currentSpeaker === getSpeakerDisplayName('Speaker Guest-1') && {
                                 backgroundColor: getVolumeColor(speakerLevel)
                             }
                         ]}>
@@ -504,7 +565,8 @@ export const VoiceAnalytics: React.FC = () => {
                                     <View key={index} style={styles.transcriptItem}>
                                         <Text style={[
                                             styles.transcriptSpeaker,
-                                            { color: transcript.speaker === 'Speaker Guest-1' ? COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER }
+                                            { color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1') ? 
+                                                COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER }
                                         ]}>
                                             {transcript.speaker}
                                         </Text>

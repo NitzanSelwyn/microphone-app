@@ -426,4 +426,71 @@ export const voiceAnalyticsStyles = StyleSheet.create({
     buttonDisabled: {
         opacity: 0.7,
     },
+    // Modal styles
+    modalOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    modalContent: {
+        backgroundColor: '#ffffff',
+        borderRadius: 12,
+        padding: 24,
+        width: '90%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 12,
+        textAlign: 'center',
+        color: '#1e293b',
+    },
+    modalDescription: {
+        fontSize: 16,
+        marginBottom: 20,
+        textAlign: 'center',
+        color: '#4b5563',
+    },
+    nameInput: {
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 16,
+        marginBottom: 20,
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    modalButton: {
+        paddingVertical: 12,
+        paddingHorizontal: 24,
+        borderRadius: 8,
+        minWidth: 120,
+        alignItems: 'center',
+    },
+    skipButton: {
+        backgroundColor: '#f3f4f6',
+    },
+    skipButtonText: {
+        color: '#6b7280',
+        fontSize: 16,
+        fontWeight: '500',
+    },
+    submitButton: {
+        backgroundColor: '#22c55e',
+    },
+    submitButtonText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: '500',
+    },
 });
