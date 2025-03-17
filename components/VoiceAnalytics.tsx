@@ -6,10 +6,32 @@ import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
 
+// Color constants
+const COLORS = {
+    // Audio level colors
+    AUDIO: {
+        QUIET: '#22c55e',    // Green - quiet levels
+        MODERATE: '#f97316', // Orange - moderate levels
+        LOUD: '#ef4444',     // Red - loud levels
+    },
+    // Speaker status colors
+    SPEAKER: {
+        ACTIVE: '#22c55e',   // Green - active speaker
+        INACTIVE: '#94a3b8', // Gray - inactive speaker
+        OTHER: '#ef4444',    // Red - other speakers
+    },
+    // UI elements
+    UI: {
+        BACKGROUND: '#ffffff',
+        TEXT: '#000000',
+        BORDER: '#e5e7eb',
+    }
+} as const;
+
 export const VoiceAnalytics: React.FC = () => {
     const { width } = useWindowDimensions();
     const isNarrowScreen = width < 700;
-    
+
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
     const [isListening, setIsListening] = useState(false);
     const [transcripts, setTranscripts] = useState<{ speaker: string, text: string }[]>([]);
@@ -26,6 +48,10 @@ export const VoiceAnalytics: React.FC = () => {
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const baselineNoiseRef = useRef<number>(0);
     const recentNoiseLevelsRef = useRef<number[]>([]);
+
+    const [isInitializing, setIsInitializing] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const cleanupRef = useRef<(() => void) | null>(null);
 
     // Create pulsing animation when speaking
     useEffect(() => {
@@ -51,12 +77,6 @@ export const VoiceAnalytics: React.FC = () => {
     }, [currentSpeaker, pulseAnim]);
 
     const calculateAudioLevel = (dataArray: Uint8Array): number => {
-        // Check if all values are very low (likely microphone is off)
-        const maxValue = Math.max(...Array.from(dataArray));
-        if (maxValue < 5) { // Threshold for silent/off microphone
-            return 0;
-        }
-        
         // Calculate RMS (Root Mean Square) of the audio data
         const rms = Math.sqrt(
             dataArray.reduce((sum, val) => sum + (val * val), 0) / dataArray.length
@@ -83,7 +103,7 @@ export const VoiceAnalytics: React.FC = () => {
         const windowSize = 30; // Use last 0.5 seconds of data (assuming 60fps)
         if (recentNoiseLevelsRef.current.length > 0) {
             const newBaseline = calculateMovingAverage(recentNoiseLevelsRef.current, windowSize);
-            
+
             // Only update baseline if it's a meaningful value (above 5) or actually 0
             if (newBaseline === 0 || newBaseline > 5) {
                 baselineNoiseRef.current = newBaseline;
@@ -93,126 +113,188 @@ export const VoiceAnalytics: React.FC = () => {
         }
     };
 
+    const cleanupAudioResources = () => {
+        if (sourceRef.current) {
+            sourceRef.current.disconnect();
+            sourceRef.current = null;
+        }
+        if (analyserRef.current) {
+            analyserRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+    };
+
+    const cleanupTranscriber = () => {
+        if (cleanupRef.current) {
+            const transcriber = cleanupRef.current;
+            cleanupRef.current = null;
+            transcriber();
+        }
+    };
+
     const startAudioMonitoring = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            // Clean up any existing audio context
+            cleanupAudioResources();
+            
             audioContextRef.current = new AudioContext();
             analyserRef.current = audioContextRef.current.createAnalyser();
             sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
 
             analyserRef.current.fftSize = 256;
+            analyserRef.current.smoothingTimeConstant = 0.8;
             sourceRef.current.connect(analyserRef.current);
 
             const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
 
             const updateLevels = () => {
-                if (analyserRef.current) {
-                    analyserRef.current.getByteFrequencyData(dataArray);
-                    const currentLevel = calculateAudioLevel(dataArray);
-
-                    // Store recent noise levels
-                    recentNoiseLevelsRef.current.push(currentLevel);
-                    if (recentNoiseLevelsRef.current.length > 120) { // 2 seconds at 60fps
-                        recentNoiseLevelsRef.current.shift();
-                    }
-
-                    // Calculate moving average for more stable readings
-                    const movingAverage = calculateMovingAverage(recentNoiseLevelsRef.current);
-
-                    // Update background level when no one is speaking
-                    if (currentSpeaker === null) {
-                        setBackgroundLevel(movingAverage);
-                        //setSpeakerLevel(0);
-                    } else {
-                        debugger;
-                        // When someone is speaking, calculate the differential from background
-                        const differential = Math.max(0, movingAverage - backgroundLevel);
-                        setSpeakerLevel(differential);
-                    }
+                if (!analyserRef.current) {
+                    return;
                 }
+                
+                analyserRef.current.getByteFrequencyData(dataArray);
+                const currentLevel = calculateAudioLevel(dataArray);
+
+                // Update recent noise levels
+                recentNoiseLevelsRef.current.push(currentLevel);
+                if (recentNoiseLevelsRef.current.length > 120) {
+                    recentNoiseLevelsRef.current.shift();
+                }
+
+                // Calculate moving average for smoother updates
+                const movingAverage = calculateMovingAverage(recentNoiseLevelsRef.current);
+
+                // Always update background level
+                setBackgroundLevel(prevLevel => {
+                    // Smooth transitions by averaging with previous value
+                    return Math.round((prevLevel + movingAverage) / 2);
+                });
+                
+                // Ensure continuous updates regardless of isListening state
                 requestAnimationFrame(updateLevels);
             };
 
+            // Start the update loop
             updateLevels();
         } catch (error) {
             console.error('Error accessing microphone:', error);
+            setError('Failed to access microphone. Please check permissions and try again.');
+            setIsListening(false);
         }
     };
 
-    const startListening = () => {
-        const speechConfig = speechsdk.SpeechConfig.fromSubscription(
-            SPEECH_KEY,
-            SPEECH_REGION
-        );
+    const startListening = async () => {
+        if (isInitializing) return;
+        
+        setIsInitializing(true);
+        setError(null);
+        
+        try {
+            const speechConfig = speechsdk.SpeechConfig.fromSubscription(
+                SPEECH_KEY,
+                SPEECH_REGION
+            );
 
-        speechConfig.speechRecognitionLanguage = "en-US";
-        const audioConfig = speechsdk.AudioConfig.fromDefaultMicrophoneInput();
-        const transcriber = new speechsdk.ConversationTranscriber(speechConfig, audioConfig);
+            speechConfig.speechRecognitionLanguage = "en-US";
+            const audioConfig = speechsdk.AudioConfig.fromDefaultMicrophoneInput();
+            const transcriber = new speechsdk.ConversationTranscriber(speechConfig, audioConfig);
 
-        transcriber.transcribed = (s, e) => {
-            const speakerId = e.result.speakerId || 'unknown';
-            const text = e.result.text;
-
-            if (text.trim()) {
-                const speaker = `Speaker ${speakerId}`;
-                
-                // Only set the first speaker if not already set
-                if (!firstSpeakerRef.current) {
-                    firstSpeakerRef.current = speaker;
-                    setActiveSpeakers([speaker]);
-                    
-                    if (speaker === 'Speaker Guest-1') {
-                        calculateBaseline();
-                    }
-                }
-                
-                // Only process transcripts from the first speaker
-                if (speaker === firstSpeakerRef.current) {
-                    setCurrentSpeaker(speaker);
-                    
-                    console.log(speaker, text);
-
-                    setTranscripts(prev => [...prev, {
-                        speaker: speaker,
-                        text: text
-                    }]);
-
-                    // Set a timeout to reset speaker and update baseline
-                    setTimeout(() => {
-                        setCurrentSpeaker(null);
-                        calculateBaseline(); // Update baseline after speech ends
-                        setSpeakerLevel(0); // Reset speaker level explicitly
-                    }, 5000);
-                }
-            }
-        };
-
-        transcriber.sessionStarted = () => {
-            startAudioMonitoring();
-            // Reset the first speaker when starting a new session
-            firstSpeakerRef.current = null;
-        };
-
-        transcriber.startTranscribingAsync(
-            () => {
-                setIsListening(true);
-            },
-            (err) => {
-                console.error('Error starting transcription:', err);
-                setIsListening(false);
-            }
-        );
-
-        return () => {
-            if (isListening) {
+            // Store cleanup function
+            cleanupRef.current = () => {
                 transcriber.stopTranscribingAsync();
                 setIsListening(false);
-                if (audioContextRef.current) {
-                    audioContextRef.current.close();
+                // Only cleanup audio resources when stopping
+                cleanupAudioResources();
+            };
+
+            transcriber.transcribed = (s, e) => {
+                const speakerId = e.result.speakerId || 'unknown';
+                const text = e.result.text;
+
+                if (text.trim()) {
+                    const speaker = `Speaker ${speakerId}`;
+
+                    if (!firstSpeakerRef.current) {
+                        firstSpeakerRef.current = speaker;
+                        setActiveSpeakers([speaker]);
+
+                        if (speaker === 'Speaker Guest-1') {
+                            calculateBaseline();
+                        }
+                    }
+
+                    if (speaker === firstSpeakerRef.current) {
+                        setCurrentSpeaker(speaker);
+                        
+                        // Get the raw audio level
+                        const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
+                        
+                        // Make sure we have a meaningful differential value
+                        // Using max with a minimum value to ensure we display something
+                        const minDisplayValue = 15; // Ensure we have at least a small visible bar
+                        let differential = Math.max(0, currentNoise - baselineNoiseRef.current);
+                        
+                        // If we're actually speaking, ensure a minimum level is shown
+                        if (currentNoise > 0) {
+                            differential = Math.max(differential, minDisplayValue);
+                        }
+                        
+                        console.log('Speaker levels:', { 
+                            currentNoise,
+                            baseline: baselineNoiseRef.current,
+                            differential
+                        });
+                        
+                        // Update speaker level
+                        setSpeakerLevel(differential);
+                        
+                        setTranscripts(prev => [...prev, {
+                            speaker: speaker,
+                            text: text
+                        }]);
+
+                        setTimeout(() => {
+                            setCurrentSpeaker(null);
+                            calculateBaseline();
+                            setSpeakerLevel(0);
+                        }, 5000);
+                    }
                 }
-            }
-        };
+            };
+
+            transcriber.sessionStarted = () => {
+                firstSpeakerRef.current = null;
+            };
+
+            await transcriber.startTranscribingAsync();
+            setIsListening(true);
+            
+            // Start audio monitoring immediately after starting transcription
+            startAudioMonitoring();
+        } catch (error) {
+            console.error('Error starting transcription:', error);
+            setError('Failed to start recording. Please try again.');
+            cleanupTranscriber();
+        } finally {
+            setIsInitializing(false);
+        }
     };
+
+    const stopListening = async () => {
+        cleanupTranscriber();
+    };
+
+    // Cleanup on component unmount
+    useEffect(() => {
+        return () => {
+            cleanupTranscriber();
+        };
+    }, []);
 
     const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
         level: number,
@@ -261,9 +343,9 @@ export const VoiceAnalytics: React.FC = () => {
 
             <View style={styles.soundLevelBar}>
                 <View style={styles.soundLevelGradient}>
-                    <View style={[styles.soundLevelSegment, { backgroundColor: '#22c55e' }]} />
-                    <View style={[styles.soundLevelSegment, { backgroundColor: '#f97316' }]} />
-                    <View style={[styles.soundLevelSegment, { backgroundColor: '#ef4444' }]} />
+                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.QUIET }]} />
+                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.MODERATE }]} />
+                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.LOUD }]} />
                 </View>
 
                 <View style={styles.tickMarksContainer}>
@@ -283,15 +365,15 @@ export const VoiceAnalytics: React.FC = () => {
 
             <View style={styles.legendItems}>
                 <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
+                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.QUIET }]} />
                     <Text style={styles.legendText}>Quiet (-60 to -30dB)</Text>
                 </View>
                 <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: '#f97316' }]} />
+                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.MODERATE }]} />
                     <Text style={styles.legendText}>Moderate (-30 to -10dB)</Text>
                 </View>
                 <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
+                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.LOUD }]} />
                     <Text style={styles.legendText}>Loud (-10 to 0dB)</Text>
                 </View>
             </View>
@@ -299,9 +381,9 @@ export const VoiceAnalytics: React.FC = () => {
     );
 
     const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 50) return '#ef4444';    // > -40dB (very loud)
-        if (speakerLevel > 30) return '#f97316';    // > -50dB (moderately loud)
-        return '#22c55e';                           // <= -50dB (normal)
+        if (speakerLevel > 50) return COLORS.AUDIO.LOUD;
+        if (speakerLevel > 30) return COLORS.AUDIO.MODERATE;
+        return COLORS.AUDIO.QUIET;
     };
 
     const toggleCollapse = () => {
@@ -318,19 +400,23 @@ export const VoiceAnalytics: React.FC = () => {
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>
                     <View style={styles.leftColumn}>
-
                         <View style={[
                             styles.statusCard,
-                            currentSpeaker === 'Speaker Guest-1' && speakerLevel < backgroundLevel * 0.5 && {
-                                backgroundColor: '#fee2e2' // Light red background
+                            currentSpeaker === 'Speaker Guest-1' && {
+                                backgroundColor: getVolumeColor(speakerLevel)
                             }
                         ]}>
+                            {error && (
+                                <View style={styles.errorContainer}>
+                                    <Text style={styles.errorText}>{error}</Text>
+                                </View>
+                            )}
                             <Animated.View style={[
                                 styles.speakingIndicator,
                                 {
                                     backgroundColor: currentSpeaker ?
-                                        (currentSpeaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444') :
-                                        '#94a3b8',
+                                        (currentSpeaker === 'Speaker Guest-1' ? COLORS.SPEAKER.INACTIVE : COLORS.SPEAKER.INACTIVE) :
+                                        COLORS.SPEAKER.INACTIVE,
                                     transform: [{ scale: currentSpeaker ? pulseAnim : 1 }]
                                 }
                             ]}>
@@ -346,11 +432,16 @@ export const VoiceAnalytics: React.FC = () => {
                             </Text>
 
                             <TouchableOpacity
-                                style={[styles.button, { backgroundColor: isListening ? '#ef4444' : '#22c55e' }]}
-                                onPress={() => !isListening && startListening()}
+                                style={[
+                                    styles.button,
+                                    { backgroundColor: isListening ? COLORS.AUDIO.LOUD : COLORS.AUDIO.QUIET },
+                                    isInitializing && styles.buttonDisabled
+                                ]}
+                                onPress={() => isListening ? stopListening() : startListening()}
+                                disabled={isInitializing}
                             >
                                 <Text style={styles.buttonText}>
-                                    {isListening ? 'Stop Recording' : 'Start Recording'}
+                                    {isInitializing ? 'Initializing...' : isListening ? 'Stop Recording' : 'Start Recording'}
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -376,7 +467,7 @@ export const VoiceAnalytics: React.FC = () => {
                                     />
                                 </View>
                             </View>
-                            
+
                             <View style={[styles.legendWrapper, isNarrowScreen ? styles.legendWrapperNarrow : {}]}>
                                 <SoundLevelLegend />
                             </View>
@@ -413,7 +504,7 @@ export const VoiceAnalytics: React.FC = () => {
                                     <View key={index} style={styles.transcriptItem}>
                                         <Text style={[
                                             styles.transcriptSpeaker,
-                                            { color: transcript.speaker === 'Speaker Guest-1' ? '#22c55e' : '#ef4444' }
+                                            { color: transcript.speaker === 'Speaker Guest-1' ? COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER }
                                         ]}>
                                             {transcript.speaker}
                                         </Text>

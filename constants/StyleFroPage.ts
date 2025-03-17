@@ -412,4 +412,18 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         color: '#475569',
         fontSize: 11,
     },
+    errorContainer: {
+        backgroundColor: '#fee2e2',
+        padding: 8,
+        borderRadius: 4,
+        marginBottom: 8,
+    },
+    errorText: {
+        color: '#dc2626',
+        fontSize: 14,
+        textAlign: 'center',
+    },
+    buttonDisabled: {
+        opacity: 0.7,
+    },
 });
