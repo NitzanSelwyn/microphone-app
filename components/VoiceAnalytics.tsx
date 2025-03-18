@@ -5,6 +5,7 @@ import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, useWindow
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
+import { useAuth } from '@/hooks/useAuth';
 
 // Color constants
 const COLORS = {
@@ -31,6 +32,7 @@ const COLORS = {
 export const VoiceAnalytics: React.FC = () => {
     const { width } = useWindowDimensions();
     const isNarrowScreen = width < 700;
+    const { user, signOut } = useAuth();
 
     const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
     const [isListening, setIsListening] = useState(false);
@@ -53,10 +55,10 @@ export const VoiceAnalytics: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const cleanupRef = useRef<(() => void) | null>(null);
 
-    // Add state for the name modal
-    const [nameModalVisible, setNameModalVisible] = useState<boolean>(true);
-    const [userName, setUserName] = useState<string>('');
-    const [tempName, setTempName] = useState<string>('');
+    // Modify the name modal logic to use Clerk user info
+    const [nameModalVisible, setNameModalVisible] = useState<boolean>(!user?.fullName);
+    const [userName, setUserName] = useState<string>(user?.fullName || '');
+    const [tempName, setTempName] = useState<string>(user?.fullName || '');
 
     // Create pulsing animation when speaking
     useEffect(() => {
@@ -415,6 +417,14 @@ export const VoiceAnalytics: React.FC = () => {
         setNameModalVisible(false);
     };
 
+    const handleSignOut = async () => {
+        try {
+            await signOut();
+        } catch (err) {
+            console.error('Error signing out:', err);
+        }
+    };
+
     return (
         <View style={styles.container}>
             {/* Name Input Modal */}
@@ -470,6 +480,19 @@ export const VoiceAnalytics: React.FC = () => {
                             {error && (
                                 <View style={styles.errorContainer}>
                                     <Text style={styles.errorText}>{error}</Text>
+                                </View>
+                            )}
+                            {user && (
+                                <View style={styles.userInfo}>
+                                    <Text style={styles.welcomeText}>
+                                        Welcome, {user.fullName || user.firstName || 'User'}
+                                    </Text>
+                                    <TouchableOpacity 
+                                        style={styles.signOutButton} 
+                                        onPress={handleSignOut}
+                                    >
+                                        <Text style={styles.signOutText}>Sign Out</Text>
+                                    </TouchableOpacity>
                                 </View>
                             )}
                             <Animated.View style={[

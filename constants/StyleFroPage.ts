@@ -493,4 +493,30 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
+    // User info styles
+    userInfo: {
+        marginBottom: 15,
+        alignItems: 'center',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+    },
+    welcomeText: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#1f2937',
+    },
+    signOutButton: {
+        backgroundColor: '#f3f4f6',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: '#d1d5db',
+    },
+    signOutText: {
+        fontSize: 14,
+        color: '#6b7280',
+        fontWeight: '500',
+    },
 });
