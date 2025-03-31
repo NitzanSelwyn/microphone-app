@@ -6,6 +6,8 @@ import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
 import { SPEECH_KEY, SPEECH_REGION } from '@/env';
 import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
 import { useAuth } from '@/hooks/useAuth';
+import { connectDB, disconnectDB } from '@/lib/db/mongodb';
+import Transcription from '@/lib/db/models/Transcription';
 
 // Color constants
 const COLORS = {
@@ -28,6 +30,9 @@ const COLORS = {
         BORDER: '#e5e7eb',
     }
 } as const;
+
+// Add this constant at the top of the file
+const API_URL = 'https://microphone-server-2617c5e1bee8.herokuapp.com/api';
 
 export const VoiceAnalytics: React.FC = () => {
     const { width } = useWindowDimensions();
@@ -59,6 +64,18 @@ export const VoiceAnalytics: React.FC = () => {
     const [nameModalVisible, setNameModalVisible] = useState<boolean>(!user?.fullName);
     const [userName, setUserName] = useState<string>(user?.fullName || '');
     const [tempName, setTempName] = useState<string>(user?.fullName || '');
+
+    // Add new state for save status
+    const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+    const [transcriptionHistory, setTranscriptionHistory] = useState<Array<{
+        _id: string;
+        text: string;
+        timestamp: Date;
+        speakerId: string;
+    }>>([]);
+
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const sidebarAnim = useRef(new Animated.Value(-300)).current;
 
     // Create pulsing animation when speaking
     useEffect(() => {
@@ -219,11 +236,22 @@ export const VoiceAnalytics: React.FC = () => {
                 cleanupAudioResources();
             };
 
-            transcriber.transcribed = (s, e) => {
-                const speakerId = e.result.speakerId || 'unknown';
-                const text = e.result.text;
+            transcriber.transcribed = async (s, e) => {
+                try {
+                    // Add null checks for required properties
+                    if (!e?.result) {
+                        console.warn('Received transcription event without result');
+                        return;
+                    }
 
-                if (text.trim()) {
+                    const speakerId = e.result.speakerId || 'unknown';
+                    const text = e.result.text;
+
+                    // Skip if text is null, undefined, or empty after trimming
+                    if (!text?.trim()) {
+                        return;
+                    }
+
                     const speaker = `Speaker ${speakerId}`;
                     const displaySpeaker = getSpeakerDisplayName(speaker);
 
@@ -261,6 +289,36 @@ export const VoiceAnalytics: React.FC = () => {
                         // Update speaker level
                         setSpeakerLevel(differential);
 
+                        // Save transcription to server
+                        try {
+                            const response = await fetch(`${API_URL}/transcriptions`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    userId: user?.id,
+                                    text: text,
+                                    speakerId: speakerId,
+                                }),
+                            });
+
+                            if (!response.ok) {
+                                throw new Error('Failed to save transcription');
+                            }
+
+                            setSaveStatus({
+                                type: 'success',
+                                message: 'Transcription saved successfully'
+                            });
+                        } catch (error) {
+                            console.error('Error saving transcription:', error);
+                            setSaveStatus({
+                                type: 'error',
+                                message: 'Failed to save transcription'
+                            });
+                        }
+
                         setTranscripts(prev => [...prev, {
                             speaker: displaySpeaker,
                             text: text
@@ -270,8 +328,12 @@ export const VoiceAnalytics: React.FC = () => {
                             setCurrentSpeaker(null);
                             calculateBaseline();
                             setSpeakerLevel(0);
+                            setSaveStatus(null);
                         }, 5000);
                     }
+                } catch (error) {
+                    console.error('Error in transcription handler:', error);
+                    setError('An error occurred while processing the transcription');
                 }
             };
 
@@ -303,6 +365,52 @@ export const VoiceAnalytics: React.FC = () => {
             cleanupTranscriber();
         };
     }, []);
+
+    // Replace the MongoDB connection useEffect with this
+    useEffect(() => {
+        let mounted = true;
+
+        const checkConnection = async () => {
+            try {
+                const response = await fetch(`${API_URL}/transcriptions?userId=${user?.id}`);
+                if (!response.ok) throw new Error('Failed to connect to server');
+                const data = await response.json();
+                setTranscriptionHistory(data);
+                if (mounted) {
+                    setTranscripts(data);
+                    setSaveStatus({
+                        type: 'success',
+                        message: 'Connected to server'
+                    });
+                }
+            } catch (error) {
+                console.error('Error connecting to server:', error);
+                if (mounted) {
+                    setSaveStatus({
+                        type: 'error',
+                        message: 'Failed to connect to server'
+                    });
+                }
+            }
+        };
+
+        if (user?.id) {
+            checkConnection();
+        }
+
+        return () => {
+            mounted = false;
+        };
+    }, [user?.id]);
+
+    // Add this after the existing useEffect hooks
+    useEffect(() => {
+        Animated.timing(sidebarAnim, {
+            toValue: isSidebarOpen ? 0 : -300,
+            duration: 300,
+            useNativeDriver: true,
+        }).start();
+    }, [isSidebarOpen]);
 
     const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
         level: number,
@@ -389,9 +497,9 @@ export const VoiceAnalytics: React.FC = () => {
     );
 
     const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 50) return COLORS.AUDIO.LOUD;
-        if (speakerLevel > 30) return COLORS.AUDIO.MODERATE;
-        return COLORS.AUDIO.QUIET;
+        if (speakerLevel > 30) return COLORS.AUDIO.LOUD;      // Red for very loud (>30dB)
+        if (speakerLevel > 15) return COLORS.AUDIO.MODERATE;  // Orange for moderate (15-30dB)
+        return COLORS.AUDIO.QUIET;                           // Green for quiet (<15dB)
     };
 
     const toggleCollapse = () => {
@@ -409,7 +517,7 @@ export const VoiceAnalytics: React.FC = () => {
         }
         return speakerId;
     };
-    
+
     const handleNameSubmit = () => {
         if (tempName.trim()) {
             setUserName(tempName.trim());
@@ -425,8 +533,74 @@ export const VoiceAnalytics: React.FC = () => {
         }
     };
 
+    const toggleSidebar = () => {
+        setIsSidebarOpen(!isSidebarOpen);
+    };
+
     return (
         <View style={styles.container}>
+            {/* Add hamburger button */}
+            <TouchableOpacity 
+                style={styles.hamburgerButton}
+                onPress={toggleSidebar}
+            >
+                <Text style={styles.hamburgerIcon}>☰</Text>
+            </TouchableOpacity>
+
+            {/* Add sidebar */}
+            <Animated.View 
+                style={[
+                    styles.sidebar,
+                    {
+                        transform: [{ translateX: sidebarAnim }],
+                    }
+                ]}
+            >
+                <View style={styles.sidebarHeader}>
+                    <Text style={styles.sidebarTitle}>Transcription History</Text>
+                    <TouchableOpacity 
+                        style={styles.closeButton}
+                        onPress={toggleSidebar}
+                    >
+                        <Text style={styles.closeButtonText}>×</Text>
+                    </TouchableOpacity>
+                </View>
+                <ScrollView style={styles.sidebarContent}>
+                    {transcriptionHistory.map((item, index) => (
+                        <View key={index} style={styles.historyItem}>
+                            <Text style={styles.historyDate}>
+                                {new Date(item.timestamp).toLocaleDateString()}
+                            </Text>
+                            <Text style={styles.historyText}>{item.text}</Text>
+                        </View>
+                    ))}
+                </ScrollView>
+            </Animated.View>
+
+            {/* Add overlay when sidebar is open */}
+            {isSidebarOpen && (
+                <TouchableOpacity 
+                    style={styles.overlay}
+                    activeOpacity={1}
+                    onPress={toggleSidebar}
+                />
+            )}
+
+            {/* Add save status display */}
+            {/* {saveStatus && (
+                <View style={[
+                    styles.saveStatusContainer,
+                    { backgroundColor: saveStatus.type === 'success' ? '#dcfce7' : '#fee2e2' }
+                ]}>
+                    <Text style={[
+                        styles.saveStatusText,
+                        { color: saveStatus.type === 'success' ? '#166534' : '#991b1b' }
+                    ]}>
+                        {saveStatus.message}
+                    </Text>
+                </View>
+            )} */}
+
             {/* Name Input Modal */}
             <Modal
                 transparent={true}
@@ -440,7 +614,7 @@ export const VoiceAnalytics: React.FC = () => {
                         <Text style={styles.modalDescription}>
                             Please enter your name to personalize your experience
                         </Text>
-                        
+
                         <TextInput
                             style={styles.nameInput}
                             placeholder="Enter your name"
@@ -448,7 +622,7 @@ export const VoiceAnalytics: React.FC = () => {
                             onChangeText={setTempName}
                             autoFocus
                         />
-                        
+
                         <View style={styles.modalButtons}>
                             {/* <TouchableOpacity 
                                 style={[styles.modalButton, styles.skipButton]} 
@@ -456,8 +630,8 @@ export const VoiceAnalytics: React.FC = () => {
                             >
                                 <Text style={styles.skipButtonText}>Skip</Text>
                             </TouchableOpacity> */}
-                            
-                            <TouchableOpacity 
+
+                            <TouchableOpacity
                                 style={[styles.modalButton, styles.submitButton]}
                                 onPress={handleNameSubmit}
                             >
@@ -467,7 +641,7 @@ export const VoiceAnalytics: React.FC = () => {
                     </View>
                 </View>
             </Modal>
-            
+
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>
                     <View style={styles.leftColumn}>
@@ -487,8 +661,8 @@ export const VoiceAnalytics: React.FC = () => {
                                     <Text style={styles.welcomeText}>
                                         Welcome, {user.fullName || user.firstName || 'User'}
                                     </Text>
-                                    <TouchableOpacity 
-                                        style={styles.signOutButton} 
+                                    <TouchableOpacity
+                                        style={styles.signOutButton}
                                         onPress={handleSignOut}
                                     >
                                         <Text style={styles.signOutText}>Sign Out</Text>
@@ -588,8 +762,10 @@ export const VoiceAnalytics: React.FC = () => {
                                     <View key={index} style={styles.transcriptItem}>
                                         <Text style={[
                                             styles.transcriptSpeaker,
-                                            { color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1') ? 
-                                                COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER }
+                                            {
+                                                color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1') ?
+                                                    COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER
+                                            }
                                         ]}>
                                             {transcript.speaker}
                                         </Text>

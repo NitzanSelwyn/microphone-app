@@ -1,0 +1,8 @@
+npx expo export
+eas deploy
+
+
+- when speaker is to loud or to quite create a popup to warrn the user
+- upload recored lines to uploadthing
+- download conversation button
+- 

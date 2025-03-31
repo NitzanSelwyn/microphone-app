@@ -414,14 +414,14 @@ export const voiceAnalyticsStyles = StyleSheet.create({
     },
     errorContainer: {
         backgroundColor: '#fee2e2',
-        padding: 8,
-        borderRadius: 4,
-        marginBottom: 8,
+        padding: 12,
+        borderRadius: 8,
+        marginBottom: 16,
+        width: '100%',
     },
     errorText: {
-        color: '#dc2626',
+        color: '#b91c1c',
         fontSize: 14,
-        textAlign: 'center',
     },
     buttonDisabled: {
         opacity: 0.7,
@@ -518,5 +518,110 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         fontSize: 14,
         color: '#6b7280',
         fontWeight: '500',
+    },
+    // Add new styles for MongoDB save status
+    saveStatusContainer: {
+        padding: 12,
+        borderRadius: 8,
+        marginBottom: 16,
+        width: '100%',
+    },
+    saveStatusText: {
+        fontSize: 14,
+        textAlign: 'center',
+    },
+    // Add new styles for hamburger menu and sidebar
+    hamburgerButton: {
+        position: 'absolute',
+        top: 16,
+        left: 16,
+        zIndex: 1000,
+        padding: 8,
+        backgroundColor: 'white',
+        borderRadius: 8,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.1,
+                shadowRadius: 2,
+            },
+            android: {
+                elevation: 2,
+            },
+        }),
+    },
+    hamburgerIcon: {
+        fontSize: 24,
+        color: '#475569',
+    },
+    sidebar: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: 300,
+        backgroundColor: 'white',
+        zIndex: 1001,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 2, height: 0 },
+                shadowOpacity: 0.25,
+                shadowRadius: 3.84,
+            },
+            android: {
+                elevation: 5,
+            },
+        }),
+    },
+    sidebarHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+    },
+    sidebarTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#1e293b',
+    },
+    closeButton: {
+        padding: 8,
+    },
+    closeButtonText: {
+        fontSize: 24,
+        color: '#64748b',
+    },
+    sidebarContent: {
+        flex: 1,
+        padding: 16,
+    },
+    historyItem: {
+        marginBottom: 16,
+        padding: 12,
+        backgroundColor: '#f8fafc',
+        borderRadius: 8,
+    },
+    historyDate: {
+        fontSize: 12,
+        color: '#64748b',
+        marginBottom: 4,
+    },
+    historyText: {
+        fontSize: 14,
+        color: '#1e293b',
+        lineHeight: 20,
+    },
+    overlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        zIndex: 1000,
     },
 });
