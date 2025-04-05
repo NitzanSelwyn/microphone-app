@@ -72,10 +72,25 @@ export const VoiceAnalytics: React.FC = () => {
         text: string;
         timestamp: Date;
         speakerId: string;
+        conversationId: string;
     }>>([]);
+    const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const sidebarAnim = useRef(new Animated.Value(-300)).current;
+
+    const [isRecording, setIsRecording] = useState(false);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+
+    const [volumeNotification, setVolumeNotification] = useState<{ message: string, type: 'high' | 'low' } | null>(null);
+    const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Add useEffect to clear transcripts on mount
+    useEffect(() => {
+        setTranscripts([]);
+        setCurrentConversationId(null);
+    }, []);
 
     // Create pulsing animation when speaking
     useEffect(() => {
@@ -159,6 +174,40 @@ export const VoiceAnalytics: React.FC = () => {
         }
     };
 
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            chunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    chunksRef.current.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                chunksRef.current = [];
+            };
+
+            mediaRecorder.start();
+            setIsRecording(true);
+        } catch (error) {
+            console.error('Error starting recording:', error);
+            setError('Failed to start recording');
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            mediaRecorderRef.current.stop();
+            mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+            setIsRecording(false);
+        }
+    };
+
     const startAudioMonitoring = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -219,6 +268,14 @@ export const VoiceAnalytics: React.FC = () => {
         setError(null);
 
         try {
+            // Start recording audio
+            await startRecording();
+
+            // Generate a new conversation ID
+            const newConversationId = uuidv4();
+            setCurrentConversationId(newConversationId);
+            setTranscripts([]); // Clear previous transcripts
+
             const speechConfig = speechsdk.SpeechConfig.fromSubscription(
                 SPEECH_KEY,
                 SPEECH_REGION
@@ -271,25 +328,21 @@ export const VoiceAnalytics: React.FC = () => {
                         const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
 
                         // Make sure we have a meaningful differential value
-                        // Using max with a minimum value to ensure we display something
-                        const minDisplayValue = 15; // Ensure we have at least a small visible bar
+                        const minDisplayValue = 15;
                         let differential = Math.max(0, currentNoise - baselineNoiseRef.current);
 
-                        // If we're actually speaking, ensure a minimum level is shown
                         if (currentNoise > 0) {
                             differential = Math.max(differential, minDisplayValue);
                         }
 
-                        console.log('Speaker levels:', {
-                            currentNoise,
-                            baseline: baselineNoiseRef.current,
-                            differential
-                        });
-
-                        // Update speaker level
                         setSpeakerLevel(differential);
 
-                        // Save transcription to server
+                        // Save transcription to server with conversation ID
+                        if (!currentConversationId) {
+                            console.error('No conversation ID available');
+                            return;
+                        }
+
                         try {
                             const response = await fetch(`${API_URL}/transcriptions`, {
                                 method: 'POST',
@@ -300,12 +353,30 @@ export const VoiceAnalytics: React.FC = () => {
                                     userId: user?.id,
                                     text: text,
                                     speakerId: speakerId,
+                                    conversationId: currentConversationId,
                                 }),
                             });
 
                             if (!response.ok) {
                                 throw new Error('Failed to save transcription');
                             }
+
+                            const lineDB = await response.json();
+                            
+                            // Update local state
+                            const newTranscription = {
+                                _id: lineDB._id,
+                                text: text,
+                                timestamp: new Date(),
+                                speakerId: speakerId,
+                                conversationId: currentConversationId,
+                            };
+
+                            setTranscriptionHistory(prev => [...prev, newTranscription]);
+                            setTranscripts(prev => [...prev, {
+                                speaker: displaySpeaker,
+                                text: text
+                            }]);
 
                             setSaveStatus({
                                 type: 'success',
@@ -318,11 +389,6 @@ export const VoiceAnalytics: React.FC = () => {
                                 message: 'Failed to save transcription'
                             });
                         }
-
-                        setTranscripts(prev => [...prev, {
-                            speaker: displaySpeaker,
-                            text: text
-                        }]);
 
                         setTimeout(() => {
                             setCurrentSpeaker(null);
@@ -356,6 +422,7 @@ export const VoiceAnalytics: React.FC = () => {
     };
 
     const stopListening = async () => {
+        stopRecording();
         cleanupTranscriber();
     };
 
@@ -411,6 +478,36 @@ export const VoiceAnalytics: React.FC = () => {
             useNativeDriver: true,
         }).start();
     }, [isSidebarOpen]);
+
+    // Add useEffect for volume notifications
+    useEffect(() => {
+        // Clear any existing notification timeout
+        if (notificationTimeoutRef.current) {
+            clearTimeout(notificationTimeoutRef.current);
+        }
+        
+        // Set new notification based on volume level
+        if (speakerLevel > 25.5) {
+            setVolumeNotification({ message: "Keep the volume down", type: 'high' });
+            // Clear notification after 5 seconds
+            notificationTimeoutRef.current = setTimeout(() => {
+                setVolumeNotification(null);
+            }, 5000);
+        } else if (speakerLevel < 5) {
+            setVolumeNotification({ message: "Please speak louder", type: 'low' });
+            // Clear notification after 5 seconds
+            notificationTimeoutRef.current = setTimeout(() => {
+                setVolumeNotification(null);
+            }, 5000);
+        }
+        
+        // Cleanup function
+        return () => {
+            if (notificationTimeoutRef.current) {
+                clearTimeout(notificationTimeoutRef.current);
+            }
+        };
+    }, [speakerLevel]);
 
     const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
         level: number,
@@ -497,9 +594,12 @@ export const VoiceAnalytics: React.FC = () => {
     );
 
     const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 30) return COLORS.AUDIO.LOUD;      // Red for very loud (>30dB)
-        if (speakerLevel > 15) return COLORS.AUDIO.MODERATE;  // Orange for moderate (15-30dB)
-        return COLORS.AUDIO.QUIET;                           // Green for quiet (<15dB)
+        if (speakerLevel > 25.5) {
+            return COLORS.AUDIO.LOUD;
+        } else if (speakerLevel > 12.75) {
+            return COLORS.AUDIO.MODERATE;
+        }
+        return COLORS.AUDIO.QUIET;
     };
 
     const toggleCollapse = () => {
@@ -537,6 +637,47 @@ export const VoiceAnalytics: React.FC = () => {
         setIsSidebarOpen(!isSidebarOpen);
     };
 
+    const downloadConversations = () => {
+        // Create text content from all conversations
+        const conversations = transcriptionHistory.reduce((acc, item) => {
+            if (!acc[item.conversationId]) {
+                acc[item.conversationId] = [];
+            }
+            acc[item.conversationId].push(item);
+            return acc;
+        }, {} as Record<string, Array<{
+            _id: string;
+            text: string;
+            timestamp: Date;
+            speakerId: string;
+            conversationId: string;
+        }>>);
+
+        const textContent = Object.entries(conversations)
+            .map(([conversationId, items]) => {
+                const date = new Date(items[0].timestamp).toLocaleDateString();
+                const conversationText = items
+                    .map(item => {
+                        const time = new Date(item.timestamp).toLocaleTimeString();
+                        return `[${time}] Speaker ${item.speakerId}: ${item.text}`;
+                    })
+                    .join('\n');
+                return `Conversation from ${date}\n${conversationText}\n\n`;
+            })
+            .join('---\n\n');
+
+        // Create and trigger download
+        const blob = new Blob([textContent], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `conversations-${new Date().toISOString().split('T')[0]}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <View style={styles.container}>
             {/* Add hamburger button */}
@@ -557,7 +698,15 @@ export const VoiceAnalytics: React.FC = () => {
                 ]}
             >
                 <View style={styles.sidebarHeader}>
-                    <Text style={styles.sidebarTitle}>Transcription History</Text>
+                    <View style={styles.sidebarTitleContainer}>
+                        <Text style={styles.sidebarTitle}>Conversation History</Text>
+                        <TouchableOpacity 
+                            style={styles.downloadButton}
+                            onPress={downloadConversations}
+                        >
+                            <Text style={styles.downloadButtonText}>⬇️</Text>
+                        </TouchableOpacity>
+                    </View>
                     <TouchableOpacity 
                         style={styles.closeButton}
                         onPress={toggleSidebar}
@@ -566,12 +715,37 @@ export const VoiceAnalytics: React.FC = () => {
                     </TouchableOpacity>
                 </View>
                 <ScrollView style={styles.sidebarContent}>
-                    {transcriptionHistory.map((item, index) => (
-                        <View key={index} style={styles.historyItem}>
-                            <Text style={styles.historyDate}>
-                                {new Date(item.timestamp).toLocaleDateString()}
+                    {Object.entries(
+                        transcriptionHistory.reduce((acc, item) => {
+                            if (!acc[item.conversationId]) {
+                                acc[item.conversationId] = [];
+                            }
+                            acc[item.conversationId].push(item);
+                            return acc;
+                        }, {} as Record<string, typeof transcriptionHistory>)
+                    ).map(([conversationId, items]) => (
+                        <View key={conversationId} style={styles.conversationGroup}>
+                            <Text style={styles.conversationDate}>
+                                {new Date(items[0].timestamp).toLocaleDateString()}
                             </Text>
-                            <Text style={styles.historyText}>{item.text}</Text>
+                            {items.map((item, index) => (
+                                <View key={index} style={styles.historyItem}>
+                                    <View style={styles.historyItemHeader}>
+                                        <Text style={styles.historyTime}>
+                                            {new Date(item.timestamp).toLocaleTimeString()}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.historyContent}>
+                                        <Text style={styles.historySpeaker}>
+                                            Speaker {item.speakerId}
+                                        </Text>
+                                        <Text style={styles.historyText}>{item.text}</Text>
+                                    </View>
+                                    {index < items.length - 1 && (
+                                        <View style={styles.historyDivider} />
+                                    )}
+                                </View>
+                            ))}
                         </View>
                     ))}
                 </ScrollView>
@@ -641,6 +815,24 @@ export const VoiceAnalytics: React.FC = () => {
                     </View>
                 </View>
             </Modal>
+
+            {/* Volume Notification */}
+            {volumeNotification && (
+                <View style={[
+                    styles.notificationContainer,
+                    { 
+                        backgroundColor: volumeNotification.type === 'high' ? '#fee2e2' : '#e0f2fe',
+                        borderColor: volumeNotification.type === 'high' ? '#ef4444' : '#3b82f6'
+                    }
+                ]}>
+                    <Text style={[
+                        styles.notificationText,
+                        { color: volumeNotification.type === 'high' ? '#991b1b' : '#1e40af' }
+                    ]}>
+                        {volumeNotification.message}
+                    </Text>
+                </View>
+            )}
 
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>

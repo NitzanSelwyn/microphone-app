@@ -583,10 +583,23 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#e5e7eb',
     },
+    sidebarTitleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
     sidebarTitle: {
         fontSize: 18,
         fontWeight: '600',
         color: '#1e293b',
+    },
+    downloadButton: {
+        padding: 8,
+        backgroundColor: '#f1f5f9',
+        borderRadius: 8,
+    },
+    downloadButtonText: {
+        fontSize: 18,
     },
     closeButton: {
         padding: 8,
@@ -600,20 +613,57 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         padding: 16,
     },
     historyItem: {
-        marginBottom: 16,
-        padding: 12,
-        backgroundColor: '#f8fafc',
-        borderRadius: 8,
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+    },
+    historyItemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
     },
     historyDate: {
-        fontSize: 12,
-        color: '#64748b',
+        fontSize: 14,
+        color: '#6b7280',
+        fontWeight: '500',
+    },
+    historyTime: {
+        fontSize: 14,
+        color: '#6b7280',
+    },
+    historyContent: {
+        marginTop: 4,
+    },
+    historySpeaker: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1f2937',
         marginBottom: 4,
     },
     historyText: {
-        fontSize: 14,
+        fontSize: 15,
+        color: '#374151',
+        lineHeight: 22,
+    },
+    historyDivider: {
+        height: 1,
+        backgroundColor: '#e5e7eb',
+        marginVertical: 8,
+    },
+    conversationGroup: {
+        marginBottom: 24,
+        backgroundColor: '#f8fafc',
+        borderRadius: 12,
+        padding: 16,
+    },
+    conversationDate: {
+        fontSize: 16,
+        fontWeight: '600',
         color: '#1e293b',
-        lineHeight: 20,
+        marginBottom: 12,
+        paddingBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
     },
     overlay: {
         position: 'absolute',
@@ -623,5 +673,34 @@ export const voiceAnalyticsStyles = StyleSheet.create({
         bottom: 0,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         zIndex: 1000,
+    },
+    notificationContainer: {
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        right: 20,
+        padding: 15,
+        borderRadius: 8,
+        borderWidth: 1,
+        zIndex: 1000,
+        ...Platform.select({
+            web: {
+                boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
+            },
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.1,
+                shadowRadius: 4,
+            },
+            android: {
+                elevation: 3,
+            },
+        }),
+    },
+    notificationText: {
+        fontSize: 16,
+        fontWeight: '600',
+        textAlign: 'center',
     },
 });
