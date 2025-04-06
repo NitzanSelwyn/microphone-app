@@ -326,16 +326,7 @@ export const VoiceAnalytics: React.FC = () => {
 
                         // Get the raw audio level
                         const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
-
-                        // Make sure we have a meaningful differential value
-                        const minDisplayValue = 15;
-                        let differential = Math.max(0, currentNoise - baselineNoiseRef.current);
-
-                        if (currentNoise > 0) {
-                            differential = Math.max(differential, minDisplayValue);
-                        }
-
-                        setSpeakerLevel(differential);
+                        setSpeakerLevel(currentNoise);
 
                         // Save transcription to server with conversation ID
                         if (!currentConversationId) {
@@ -487,18 +478,16 @@ export const VoiceAnalytics: React.FC = () => {
         }
         
         // Set new notification based on volume level
-        if (speakerLevel > 25.5) {
+        if (speakerLevel > 40) {
             setVolumeNotification({ message: "Keep the volume down", type: 'high' });
-            // Clear notification after 5 seconds
             notificationTimeoutRef.current = setTimeout(() => {
                 setVolumeNotification(null);
-            }, 5000);
-        } else if (speakerLevel < 5) {
+            }, 3000);
+        } else if (speakerLevel < 20) {
             setVolumeNotification({ message: "Please speak louder", type: 'low' });
-            // Clear notification after 5 seconds
             notificationTimeoutRef.current = setTimeout(() => {
                 setVolumeNotification(null);
-            }, 5000);
+            }, 3000);
         }
         
         // Cleanup function
@@ -594,9 +583,9 @@ export const VoiceAnalytics: React.FC = () => {
     );
 
     const getVolumeColor = (speakerLevel: number): string => {
-        if (speakerLevel > 25.5) {
+        if (speakerLevel > 40) {
             return COLORS.AUDIO.LOUD;
-        } else if (speakerLevel > 12.75) {
+        } else if (speakerLevel > 25) {
             return COLORS.AUDIO.MODERATE;
         }
         return COLORS.AUDIO.QUIET;
