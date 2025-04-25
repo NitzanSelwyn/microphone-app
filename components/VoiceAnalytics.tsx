@@ -83,7 +83,7 @@ export const VoiceAnalytics: React.FC = () => {
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
 
-    const [volumeNotification, setVolumeNotification] = useState<{ message: string, type: 'high' | 'low' } | null>(null);
+    const [volumeNotification, setVolumeNotification] = useState<{ message: string, type: 'high' | 'low' | 'ok' | 'background', color?: string } | null>(null);
     const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Add useEffect to clear transcripts on mount
@@ -476,27 +476,38 @@ export const VoiceAnalytics: React.FC = () => {
         if (notificationTimeoutRef.current) {
             clearTimeout(notificationTimeoutRef.current);
         }
-        
-        // Set new notification based on volume level
-        if (speakerLevel > 40) {
-            setVolumeNotification({ message: "Keep the volume down", type: 'high' });
-            notificationTimeoutRef.current = setTimeout(() => {
-                setVolumeNotification(null);
-            }, 3000);
-        } else if (speakerLevel < 20) {
-            setVolumeNotification({ message: "Please speak louder", type: 'low' });
-            notificationTimeoutRef.current = setTimeout(() => {
-                setVolumeNotification(null);
-            }, 3000);
+
+        // Only show notification if the speaker level is significantly above the background (actual voice)
+        const threshold = 8; // dB above background to consider as speaking
+        const isSpeaking = speakerLevel - backgroundLevel > threshold;
+
+        let notification: { message: string, type: 'high' | 'low' | 'ok' | 'background', color?: string } | null = null;
+        if (isSpeaking) {
+            if (speakerLevel > 40) {
+                notification = { message: "Keep the volume down", type: 'high', color: COLORS.AUDIO.LOUD };
+            } else if (speakerLevel < backgroundLevel + threshold + 5) {
+                notification = { message: "Please speak louder", type: 'low', color: COLORS.AUDIO.MODERATE };
+            } else {
+                notification = { message: "Good speaking volume", type: 'ok', color: COLORS.AUDIO.QUIET };
+            }
         }
-        
+
+        if (notification) {
+            setVolumeNotification(notification);
+            notificationTimeoutRef.current = setTimeout(() => {
+                setVolumeNotification(null);
+            }, 5000);
+        } else {
+            setVolumeNotification(null);
+        }
+
         // Cleanup function
         return () => {
             if (notificationTimeoutRef.current) {
                 clearTimeout(notificationTimeoutRef.current);
             }
         };
-    }, [speakerLevel]);
+    }, [speakerLevel, backgroundLevel]);
 
     const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
         level: number,
@@ -809,14 +820,14 @@ export const VoiceAnalytics: React.FC = () => {
             {volumeNotification && (
                 <View style={[
                     styles.notificationContainer,
-                    { 
-                        backgroundColor: volumeNotification.type === 'high' ? '#fee2e2' : '#e0f2fe',
-                        borderColor: volumeNotification.type === 'high' ? '#ef4444' : '#3b82f6'
+                    {
+                        backgroundColor: volumeNotification.color || (volumeNotification.type === 'high' ? COLORS.AUDIO.LOUD : volumeNotification.type === 'low' ? COLORS.AUDIO.MODERATE : COLORS.AUDIO.QUIET),
+                        borderColor: volumeNotification.color || (volumeNotification.type === 'high' ? '#ef4444' : volumeNotification.type === 'low' ? '#f97316' : '#22c55e'),
                     }
                 ]}>
                     <Text style={[
                         styles.notificationText,
-                        { color: volumeNotification.type === 'high' ? '#991b1b' : '#1e40af' }
+                        { color: '#fff' }
                     ]}>
                         {volumeNotification.message}
                     </Text>
