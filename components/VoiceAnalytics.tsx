@@ -15,6 +15,7 @@ import AudioLevelIndicator from './voiceAnalytics/AudioLevelIndicator';
 import SoundLevelLegend from './voiceAnalytics/SoundLevelLegend';
 import type { Transcript, VolumeNotification } from '@/types/voiceAnalytics';
 import Sidebar from './voiceAnalytics/Sidebar';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 export const VoiceAnalytics: React.FC = () => {
     const { width } = useWindowDimensions();
@@ -53,7 +54,7 @@ export const VoiceAnalytics: React.FC = () => {
     const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-    const sidebarAnim = useRef(new Animated.Value(-300)).current;
+    const sidebarAnim = useRef(new Animated.Value(-320)).current;
 
     const [isRecording, setIsRecording] = useState(false);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -400,7 +401,7 @@ export const VoiceAnalytics: React.FC = () => {
     // Add this after the existing useEffect hooks
     useEffect(() => {
         Animated.timing(sidebarAnim, {
-            toValue: isSidebarOpen ? 0 : -300,
+            toValue: isSidebarOpen ? 0 : -320,
             duration: 300,
             useNativeDriver: true,
         }).start();
@@ -557,10 +558,30 @@ export const VoiceAnalytics: React.FC = () => {
 
     return (
         <View style={styles.container}>
+            {/* Header Bar */}
+            <View style={styles.headerBar}>
+                <Text style={styles.appTitle}>Voice Analytics</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={styles.userAvatar} accessibilityLabel="User avatar">
+                        <Text style={styles.userAvatarText}>
+                            {user?.fullName ? user.fullName[0] : 'U'}
+                        </Text>
+                    </View>
+                    <TouchableOpacity
+                        style={styles.signOutButton}
+                        onPress={handleSignOut}
+                        accessibilityLabel="Sign out"
+                    >
+                        <Text style={styles.signOutText}>Sign Out</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
             {/* Add hamburger button */}
             <TouchableOpacity
                 style={styles.hamburgerButton}
                 onPress={toggleSidebar}
+                accessibilityLabel="Open sidebar menu"
             >
                 <Text style={styles.hamburgerIcon}>☰</Text>
             </TouchableOpacity>
@@ -580,6 +601,7 @@ export const VoiceAnalytics: React.FC = () => {
                     style={styles.overlay}
                     activeOpacity={1}
                     onPress={toggleSidebar}
+                    accessibilityLabel="Close sidebar menu"
                 />
             )}
 
@@ -592,23 +614,30 @@ export const VoiceAnalytics: React.FC = () => {
             >
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
+                        <TouchableOpacity
+                            style={styles.modalCloseButton}
+                            onPress={() => setNameModalVisible(false)}
+                            accessibilityLabel="Close name input modal"
+                        >
+                            <Text style={styles.modalCloseIcon}>×</Text>
+                        </TouchableOpacity>
                         <Text style={styles.modalTitle}>Welcome to Voice Analytics</Text>
                         <Text style={styles.modalDescription}>
                             Please enter your name to personalize your experience
                         </Text>
-
                         <TextInput
                             style={styles.nameInput}
                             placeholder="Enter your name"
                             value={tempName}
                             onChangeText={setTempName}
                             autoFocus
+                            accessibilityLabel="Name input"
                         />
-
                         <View style={styles.modalButtons}>
                             <TouchableOpacity
                                 style={[styles.modalButton, styles.submitButton]}
                                 onPress={handleNameSubmit}
+                                accessibilityLabel="Continue with entered name"
                             >
                                 <Text style={styles.submitButtonText}>Continue</Text>
                             </TouchableOpacity>
@@ -617,19 +646,20 @@ export const VoiceAnalytics: React.FC = () => {
                 </View>
             </Modal>
 
-            {/* Volume Notification */}
+            {/* Snackbar Notification */}
             {volumeNotification && (
-                <View style={[
-                    styles.notificationContainer,
-                    {
-                        backgroundColor: volumeNotification.color || (volumeNotification.type === 'high' ? COLORS.AUDIO.LOUD : volumeNotification.type === 'low' ? COLORS.AUDIO.MODERATE : COLORS.AUDIO.QUIET),
-                        borderColor: volumeNotification.color || (volumeNotification.type === 'high' ? '#ef4444' : volumeNotification.type === 'low' ? '#f97316' : '#22c55e'),
-                    }
-                ]}>
-                    <Text style={[
-                        styles.notificationText,
-                        { color: '#fff' }
-                    ]}>
+                <View style={styles.notificationContainer}>
+                    <MaterialIcons
+                        name={
+                            volumeNotification.type === 'high' ? 'volume-up' :
+                            volumeNotification.type === 'low' ? 'volume-down' :
+                            'volume-mute'
+                        }
+                        size={24}
+                        color={styles.notificationText.color}
+                        style={styles.notificationIcon}
+                    />
+                    <Text style={styles.notificationText}>
                         {volumeNotification.message}
                     </Text>
                 </View>
@@ -638,12 +668,13 @@ export const VoiceAnalytics: React.FC = () => {
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>
                     <View style={styles.leftColumn}>
-                        <View style={[
-                            styles.statusCard,
-                            currentSpeaker === getSpeakerDisplayName('Speaker Guest-1', userName) && {
-                                backgroundColor: getVolumeColor(speakerLevel)
-                            }
-                        ]}>
+                        <View style={styles.statusCard}>
+                            {/* Live badge */}
+                            {currentSpeaker && (
+                                <View style={styles.liveBadge}>
+                                    <Text style={styles.liveText}>LIVE</Text>
+                                </View>
+                            )}
                             {error && (
                                 <View style={styles.errorContainer}>
                                     <Text style={styles.errorText}>{error}</Text>
@@ -654,49 +685,22 @@ export const VoiceAnalytics: React.FC = () => {
                                     <Text style={styles.welcomeText}>
                                         Welcome, {user.fullName || user.firstName || 'User'}
                                     </Text>
-                                    <TouchableOpacity
-                                        style={styles.signOutButton}
-                                        onPress={handleSignOut}
-                                    >
-                                        <Text style={styles.signOutText}>Sign Out</Text>
-                                    </TouchableOpacity>
                                 </View>
                             )}
-                            <Animated.View style={[
-                                styles.speakingIndicator,
-                                {
-                                    backgroundColor: currentSpeaker ?
-                                        (currentSpeaker === 'Speaker Guest-1' ? COLORS.SPEAKER.INACTIVE : COLORS.SPEAKER.INACTIVE) :
-                                        COLORS.SPEAKER.INACTIVE,
-                                    transform: [{ scale: currentSpeaker ? pulseAnim : 1 }]
-                                }
-                            ]}>
-                                {currentSpeaker && (
-                                    <View style={styles.speakingBadge}>
-                                        <Text style={styles.speakingBadgeText}>LIVE</Text>
-                                    </View>
-                                )}
-                            </Animated.View>
-
                             <Text style={styles.speakerStatus}>
                                 {currentSpeaker || 'No one speaking'}
                             </Text>
-
                             <TouchableOpacity
-                                style={[
-                                    styles.button,
-                                    { backgroundColor: isListening ? COLORS.AUDIO.LOUD : COLORS.AUDIO.QUIET },
-                                    isInitializing && styles.buttonDisabled
-                                ]}
+                                style={styles.primaryButton}
                                 onPress={() => isListening ? stopListening() : startListening()}
                                 disabled={isInitializing}
+                                accessibilityLabel={isListening ? 'Stop Recording' : 'Start Recording'}
                             >
-                                <Text style={styles.buttonText}>
+                                <Text style={styles.primaryButtonText}>
                                     {isInitializing ? 'Initializing...' : isListening ? 'Stop Recording' : 'Start Recording'}
                                 </Text>
                             </TouchableOpacity>
                         </View>
-
                         <View style={[styles.metricsContainer, isNarrowScreen ? styles.metricsContainerNarrow : {}]}>
                             <View style={[styles.metricsGrid, isNarrowScreen ? styles.metricsGridNarrow : {}]}>
                                 <View style={[styles.metricCard, isNarrowScreen ? styles.metricCardNarrow : {}]}>
@@ -708,44 +712,25 @@ export const VoiceAnalytics: React.FC = () => {
                                         baseline={backgroundLevel}
                                     />
                                 </View>
-
                                 <View style={[styles.metricCard, isNarrowScreen ? styles.metricCardNarrow : {}]}>
                                     <Text style={styles.metricLabel}>Background Level</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                        <IconSymbol
-                                            name={getBackgroundIconName(backgroundLevel)}
-                                            size={28 + Math.min(22, Math.max(0, backgroundLevel))}
-                                            color={
-                                                backgroundLevel > 50
-                                                    ? COLORS.AUDIO.LOUD
-                                                    : backgroundLevel > 35
-                                                        ? COLORS.AUDIO.MODERATE
-                                                        : COLORS.AUDIO.QUIET
-                                            }
-                                            style={{ marginRight: 8 }}
-                                        />
-                                        <AudioLevelIndicator
-                                            level={backgroundLevel}
-                                            label="Background"
-                                            color="#64748b"
-                                        />
-                                    </View>
+                                    <AudioLevelIndicator
+                                        level={backgroundLevel}
+                                        label="Background"
+                                        color="#64748b"
+                                    />
                                 </View>
                             </View>
-
                             <View style={[styles.legendWrapper, isNarrowScreen ? styles.legendWrapperNarrow : {}]}>
                                 <SoundLevelLegend />
                             </View>
                         </View>
-
                         <View style={styles.transcriptContainer}>
                             <Text style={styles.transcriptTitle}>Conversation History</Text>
-
-                            <TouchableOpacity onPress={toggleCollapse} style={styles.collapseHeader}>
+                            <TouchableOpacity onPress={toggleCollapse} style={styles.collapseHeader} accessibilityLabel="Toggle active speakers">
                                 <Text style={styles.collapseHeaderText}>Active Speakers</Text>
                                 <Text style={styles.collapseIcon}>{isCollapsed ? '▼' : '▲'}</Text>
                             </TouchableOpacity>
-
                             <Animated.View style={[
                                 styles.activeSpeakersContainer,
                                 {
@@ -763,22 +748,26 @@ export const VoiceAnalytics: React.FC = () => {
                                     </View>
                                 ))}
                             </Animated.View>
-
                             <View style={styles.transcriptsList}>
-                                {transcripts.map((transcript, index) => (
-                                    <View key={index} style={styles.transcriptItem}>
-                                        <Text style={[
-                                            styles.transcriptSpeaker,
-                                            {
-                                                color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1', userName) ?
-                                                    COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER
-                                            }
-                                        ]}>
-                                            {transcript.speaker}
-                                        </Text>
-                                        <Text style={styles.transcriptText}>{transcript.text}</Text>
-                                    </View>
-                                ))}
+                                {transcripts.map((transcript, index) => {
+                                    const isRight = transcript.speaker === getSpeakerDisplayName('Speaker Guest-1', userName);
+                                    return (
+                                        <View key={index} style={[styles.transcriptItem, isRight && { flexDirection: 'row-reverse' }]}> 
+                                            <View style={[
+                                                styles.transcriptBubble,
+                                                isRight && styles.transcriptBubbleRight
+                                            ]}>
+                                                <Text style={[
+                                                    styles.transcriptText,
+                                                    isRight && styles.transcriptTextRight
+                                                ]}>
+                                                    {transcript.text}
+                                                </Text>
+                                                <Text style={styles.timestamp}>{transcript.speaker}</Text>
+                                            </View>
+                                        </View>
+                                    );
+                                })}
                             </View>
                         </View>
                     </View>
