@@ -8,31 +8,13 @@ import { voiceAnalyticsStyles as styles } from '@/constants/StyleFroPage';
 import { useAuth } from '@/hooks/useAuth';
 import { connectDB, disconnectDB } from '@/lib/db/mongodb';
 import Transcription from '@/lib/db/models/Transcription';
-
-// Color constants
-const COLORS = {
-    // Audio level colors
-    AUDIO: {
-        QUIET: '#22c55e',    // Green - quiet levels
-        MODERATE: '#f97316', // Orange - moderate levels
-        LOUD: '#ef4444',     // Red - loud levels
-    },
-    // Speaker status colors
-    SPEAKER: {
-        ACTIVE: '#22c55e',   // Green - active speaker
-        INACTIVE: '#94a3b8', // Gray - inactive speaker
-        OTHER: '#ef4444',    // Red - other speakers
-    },
-    // UI elements
-    UI: {
-        BACKGROUND: '#ffffff',
-        TEXT: '#000000',
-        BORDER: '#e5e7eb',
-    }
-} as const;
-
-// Add this constant at the top of the file
-const API_URL = 'https://microphone-server-2617c5e1bee8.herokuapp.com/api';
+import { IconSymbol } from './ui/IconSymbol';
+import { COLORS, API_URL } from '@/constants/voiceAnalyticsConstants';
+import { calculateAudioLevel, calculateMovingAverage, calculateBaseline, getVolumeColor, getSpeakerDisplayName, getBackgroundIconName } from '@/lib/voiceAnalyticsHelpers';
+import AudioLevelIndicator from './voiceAnalytics/AudioLevelIndicator';
+import SoundLevelLegend from './voiceAnalytics/SoundLevelLegend';
+import type { Transcript, VolumeNotification } from '@/types/voiceAnalytics';
+import Sidebar from './voiceAnalytics/Sidebar';
 
 export const VoiceAnalytics: React.FC = () => {
     const { width } = useWindowDimensions();
@@ -67,13 +49,7 @@ export const VoiceAnalytics: React.FC = () => {
 
     // Add new state for save status
     const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-    const [transcriptionHistory, setTranscriptionHistory] = useState<Array<{
-        _id: string;
-        text: string;
-        timestamp: Date;
-        speakerId: string;
-        conversationId: string;
-    }>>([]);
+    const [transcriptionHistory, setTranscriptionHistory] = useState<Transcript[]>([]);
     const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -85,6 +61,8 @@ export const VoiceAnalytics: React.FC = () => {
 
     const [volumeNotification, setVolumeNotification] = useState<{ message: string, type: 'high' | 'low' | 'ok' | 'background', color?: string } | null>(null);
     const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const speakerLevelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Add useEffect to clear transcripts on mount
     useEffect(() => {
@@ -136,42 +114,6 @@ export const VoiceAnalytics: React.FC = () => {
         if (values.length === 0) return 0;
         const window = values.slice(-windowSize);
         return Math.round(window.reduce((a, b) => a + b, 0) / window.length);
-    };
-
-    const calculateBaseline = () => {
-        const windowSize = 30; // Use last 0.5 seconds of data (assuming 60fps)
-        if (recentNoiseLevelsRef.current.length > 0) {
-            const newBaseline = calculateMovingAverage(recentNoiseLevelsRef.current, windowSize);
-
-            // Only update baseline if it's a meaningful value (above 5) or actually 0
-            if (newBaseline === 0 || newBaseline > 5) {
-                baselineNoiseRef.current = newBaseline;
-                setBackgroundLevel(newBaseline); // Update the background level state
-                console.log('New baseline established:', newBaseline);
-            }
-        }
-    };
-
-    const cleanupAudioResources = () => {
-        if (sourceRef.current) {
-            sourceRef.current.disconnect();
-            sourceRef.current = null;
-        }
-        if (analyserRef.current) {
-            analyserRef.current = null;
-        }
-        if (audioContextRef.current) {
-            audioContextRef.current.close();
-            audioContextRef.current = null;
-        }
-    };
-
-    const cleanupTranscriber = () => {
-        if (cleanupRef.current) {
-            const transcriber = cleanupRef.current;
-            cleanupRef.current = null;
-            transcriber();
-        }
     };
 
     const startRecording = async () => {
@@ -310,14 +252,17 @@ export const VoiceAnalytics: React.FC = () => {
                     }
 
                     const speaker = `Speaker ${speakerId}`;
-                    const displaySpeaker = getSpeakerDisplayName(speaker);
+                    const displaySpeaker = getSpeakerDisplayName(speaker, userName);
 
                     if (!firstSpeakerRef.current) {
                         firstSpeakerRef.current = speaker;
                         setActiveSpeakers([displaySpeaker]);
 
-                        if (speaker === 'Speaker Guest-1') {
-                            calculateBaseline();
+                        const newBaseline = calculateBaseline(recentNoiseLevelsRef.current);
+                        if (newBaseline === 0 || newBaseline > 5) {
+                            baselineNoiseRef.current = newBaseline;
+                            setBackgroundLevel(newBaseline);
+                            console.log('New baseline established:', newBaseline);
                         }
                     }
 
@@ -327,6 +272,13 @@ export const VoiceAnalytics: React.FC = () => {
                         // Get the raw audio level
                         const currentNoise = calculateMovingAverage(recentNoiseLevelsRef.current);
                         setSpeakerLevel(currentNoise);
+                        // Reset speaker level after 5 seconds
+                        if (speakerLevelTimeoutRef.current) {
+                            clearTimeout(speakerLevelTimeoutRef.current);
+                        }
+                        speakerLevelTimeoutRef.current = setTimeout(() => {
+                            setSpeakerLevel(0);
+                        }, 5000);
 
                         // Save transcription to server with conversation ID
                         if (!currentConversationId) {
@@ -353,7 +305,7 @@ export const VoiceAnalytics: React.FC = () => {
                             }
 
                             const lineDB = await response.json();
-                            
+
                             // Update local state
                             const newTranscription = {
                                 _id: lineDB._id,
@@ -361,6 +313,7 @@ export const VoiceAnalytics: React.FC = () => {
                                 timestamp: new Date(),
                                 speakerId: speakerId,
                                 conversationId: currentConversationId,
+                                userId: user?.id || '',
                             };
 
                             setTranscriptionHistory(prev => [...prev, newTranscription]);
@@ -383,10 +336,15 @@ export const VoiceAnalytics: React.FC = () => {
 
                         setTimeout(() => {
                             setCurrentSpeaker(null);
-                            calculateBaseline();
+                            const newBaseline = calculateBaseline(recentNoiseLevelsRef.current);
+                            if (newBaseline === 0 || newBaseline > 5) {
+                                baselineNoiseRef.current = newBaseline;
+                                setBackgroundLevel(newBaseline);
+                                console.log('New baseline established:', newBaseline);
+                            }
                             setSpeakerLevel(0);
                             setSaveStatus(null);
-                        }, 5000);
+                        }, 8000);
                     }
                 } catch (error) {
                     console.error('Error in transcription handler:', error);
@@ -433,7 +391,7 @@ export const VoiceAnalytics: React.FC = () => {
                 const response = await fetch(`${API_URL}/transcriptions?userId=${user?.id}`);
                 if (!response.ok) throw new Error('Failed to connect to server');
                 const data = await response.json();
-                setTranscriptionHistory(data);
+                setTranscriptionHistory(data.map((item: any) => ({ ...item, userId: item.userId || user?.id || '' })));
                 if (mounted) {
                     setTranscripts(data);
                     setSaveStatus({
@@ -496,7 +454,7 @@ export const VoiceAnalytics: React.FC = () => {
             setVolumeNotification(notification);
             notificationTimeoutRef.current = setTimeout(() => {
                 setVolumeNotification(null);
-            }, 5000);
+            }, 30000); // Show notification for 30 seconds
         } else {
             setVolumeNotification(null);
         }
@@ -508,90 +466,6 @@ export const VoiceAnalytics: React.FC = () => {
             }
         };
     }, [speakerLevel, backgroundLevel]);
-
-    const AudioLevelIndicator = ({ level, label, color, baseline = null }: {
-        level: number,
-        label: string,
-        color: string,
-        baseline?: number | null
-    }) => (
-        <View style={styles.audioIndicator}>
-            <View style={styles.audioLabelContainer}>
-                <Text style={styles.audioLabel}>
-                    {label}: {level}dB
-                </Text>
-                {baseline !== null && (
-                    <Text style={styles.audioLabelSmall}>
-                        Baseline: {baseline}dB
-                    </Text>
-                )}
-            </View>
-            <View style={styles.audioBar}>
-                {baseline !== null && (
-                    <>
-                        <View style={[styles.baselineArea, { width: `${baseline}%` }]} />
-                        <View style={[styles.baselineMark, { left: `${baseline}%` }]} />
-                    </>
-                )}
-                <View
-                    style={[
-                        styles.audioLevel,
-                        {
-                            backgroundColor: color,
-                            marginLeft: baseline !== null ? `${baseline}%` : 0,
-                            width: baseline !== null ? `${Math.max(0, level - baseline)}%` : `${level}%`
-                        }
-                    ]}
-                />
-            </View>
-        </View>
-    );
-
-    const SoundLevelLegend = () => (
-        <View style={styles.legendContainer}>
-            <Text style={styles.legendTitle}>Sound Level Reference</Text>
-            <Text style={styles.legendDescription}>
-                Showing relative audio level in decibels (dB)
-            </Text>
-
-            <View style={styles.soundLevelBar}>
-                <View style={styles.soundLevelGradient}>
-                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.QUIET }]} />
-                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.MODERATE }]} />
-                    <View style={[styles.soundLevelSegment, { backgroundColor: COLORS.AUDIO.LOUD }]} />
-                </View>
-
-                <View style={styles.tickMarksContainer}>
-                    <View style={styles.tickMark} />
-                    <View style={styles.tickMark} />
-                    <View style={styles.tickMark} />
-                    <View style={styles.tickMark} />
-                </View>
-
-                <View style={styles.soundLevelLabels}>
-                    <Text style={styles.soundLevelLabel}>0dB</Text>
-                    <Text style={styles.soundLevelLabel}>20dB</Text>
-                    <Text style={styles.soundLevelLabel}>40dB</Text>
-                    <Text style={styles.soundLevelLabel}>60dB</Text>
-                </View>
-            </View>
-
-            <View style={styles.legendItems}>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.QUIET }]} />
-                    <Text style={styles.legendText}>Quiet (0dB to 10dB)</Text>
-                </View>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.MODERATE }]} />
-                    <Text style={styles.legendText}>Moderate (10dB to 30dB)</Text>
-                </View>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendColor, { backgroundColor: COLORS.AUDIO.LOUD }]} />
-                    <Text style={styles.legendText}>Loud (30dB to 60dB)</Text>
-                </View>
-            </View>
-        </View>
-    );
 
     const getVolumeColor = (speakerLevel: number): string => {
         if (speakerLevel > 40) {
@@ -611,7 +485,7 @@ export const VoiceAnalytics: React.FC = () => {
         }).start();
     };
 
-    const getSpeakerDisplayName = (speakerId: string): string => {
+    const getSpeakerDisplayName = (speakerId: string, userName: string): string => {
         if (speakerId === 'Speaker Guest-1' && userName) {
             return `Speaker ${userName}`;
         }
@@ -678,10 +552,40 @@ export const VoiceAnalytics: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
+    // Helper to get background icon name based on volume
+    const getBackgroundIconName = (level: number): any => {
+        if (level >= 85) return 'airplanemode-active'; // Airplane
+        if (level >= 70) return 'directions-car';      // Car/Busy street
+        if (level >= 60) return 'vacuum';             // Vacuum cleaner
+        return 'background.volume';                    // Quiet/normal
+    };
+
+    const cleanupAudioResources = () => {
+        if (sourceRef.current) {
+            sourceRef.current.disconnect();
+            sourceRef.current = null;
+        }
+        if (analyserRef.current) {
+            analyserRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+    };
+
+    const cleanupTranscriber = () => {
+        if (cleanupRef.current) {
+            const transcriber = cleanupRef.current;
+            cleanupRef.current = null;
+            transcriber();
+        }
+    };
+
     return (
         <View style={styles.container}>
             {/* Add hamburger button */}
-            <TouchableOpacity 
+            <TouchableOpacity
                 style={styles.hamburgerButton}
                 onPress={toggleSidebar}
             >
@@ -689,71 +593,17 @@ export const VoiceAnalytics: React.FC = () => {
             </TouchableOpacity>
 
             {/* Add sidebar */}
-            <Animated.View 
-                style={[
-                    styles.sidebar,
-                    {
-                        transform: [{ translateX: sidebarAnim }],
-                    }
-                ]}
-            >
-                <View style={styles.sidebarHeader}>
-                    <View style={styles.sidebarTitleContainer}>
-                        <Text style={styles.sidebarTitle}>Conversation History</Text>
-                        <TouchableOpacity 
-                            style={styles.downloadButton}
-                            onPress={downloadConversations}
-                        >
-                            <Text style={styles.downloadButtonText}>⬇️</Text>
-                        </TouchableOpacity>
-                    </View>
-                    <TouchableOpacity 
-                        style={styles.closeButton}
-                        onPress={toggleSidebar}
-                    >
-                        <Text style={styles.closeButtonText}>×</Text>
-                    </TouchableOpacity>
-                </View>
-                <ScrollView style={styles.sidebarContent}>
-                    {Object.entries(
-                        transcriptionHistory.reduce((acc, item) => {
-                            if (!acc[item.conversationId]) {
-                                acc[item.conversationId] = [];
-                            }
-                            acc[item.conversationId].push(item);
-                            return acc;
-                        }, {} as Record<string, typeof transcriptionHistory>)
-                    ).map(([conversationId, items]) => (
-                        <View key={conversationId} style={styles.conversationGroup}>
-                            <Text style={styles.conversationDate}>
-                                {new Date(items[0].timestamp).toLocaleDateString()}
-                            </Text>
-                            {items.map((item, index) => (
-                                <View key={index} style={styles.historyItem}>
-                                    <View style={styles.historyItemHeader}>
-                                        <Text style={styles.historyTime}>
-                                            {new Date(item.timestamp).toLocaleTimeString()}
-                                        </Text>
-                                    </View>
-                                    <View style={styles.historyContent}>
-                                        <Text style={styles.historySpeaker}>
-                                            Speaker {item.speakerId}
-                                        </Text>
-                                        <Text style={styles.historyText}>{item.text}</Text>
-                                    </View>
-                                    {index < items.length - 1 && (
-                                        <View style={styles.historyDivider} />
-                                    )}
-                                </View>
-                            ))}
-                        </View>
-                    ))}
-                </ScrollView>
-            </Animated.View>
+            <Sidebar
+                isSidebarOpen={isSidebarOpen}
+                sidebarAnim={sidebarAnim}
+                transcriptionHistory={transcriptionHistory}
+                toggleSidebar={toggleSidebar}
+                downloadConversations={downloadConversations}
+            />
 
             {/* Add overlay when sidebar is open */}
             {isSidebarOpen && (
-                <TouchableOpacity 
+                <TouchableOpacity
                     style={styles.overlay}
                     activeOpacity={1}
                     onPress={toggleSidebar}
@@ -839,7 +689,7 @@ export const VoiceAnalytics: React.FC = () => {
                     <View style={styles.leftColumn}>
                         <View style={[
                             styles.statusCard,
-                            currentSpeaker === getSpeakerDisplayName('Speaker Guest-1') && {
+                            currentSpeaker === getSpeakerDisplayName('Speaker Guest-1', userName) && {
                                 backgroundColor: getVolumeColor(speakerLevel)
                             }
                         ]}>
@@ -910,11 +760,25 @@ export const VoiceAnalytics: React.FC = () => {
 
                                 <View style={[styles.metricCard, isNarrowScreen ? styles.metricCardNarrow : {}]}>
                                     <Text style={styles.metricLabel}>Background Level</Text>
-                                    <AudioLevelIndicator
-                                        level={backgroundLevel}
-                                        label="Background"
-                                        color="#64748b"
-                                    />
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <IconSymbol
+                                            name={getBackgroundIconName(backgroundLevel)}
+                                            size={28 + Math.min(22, Math.max(0, backgroundLevel))}
+                                            color={
+                                                backgroundLevel > 50
+                                                    ? COLORS.AUDIO.LOUD
+                                                    : backgroundLevel > 35
+                                                        ? COLORS.AUDIO.MODERATE
+                                                        : COLORS.AUDIO.QUIET
+                                            }
+                                            style={{ marginRight: 8 }}
+                                        />
+                                        <AudioLevelIndicator
+                                            level={backgroundLevel}
+                                            label="Background"
+                                            color="#64748b"
+                                        />
+                                    </View>
                                 </View>
                             </View>
 
@@ -955,7 +819,7 @@ export const VoiceAnalytics: React.FC = () => {
                                         <Text style={[
                                             styles.transcriptSpeaker,
                                             {
-                                                color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1') ?
+                                                color: transcript.speaker === getSpeakerDisplayName('Speaker Guest-1', userName) ?
                                                     COLORS.SPEAKER.ACTIVE : COLORS.SPEAKER.OTHER
                                             }
                                         ]}>

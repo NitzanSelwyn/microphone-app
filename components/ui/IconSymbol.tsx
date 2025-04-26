@@ -13,6 +13,10 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'background.volume': 'graphic-eq',
+  'airplanemode-active': 'airplanemode-active',
+  'directions-car': 'directions-car',
+  'vacuum': 'graphic-eq', // fallback for vacuum if not available
 } as Partial<
   Record<
     import('expo-symbols').SymbolViewProps['name'],
