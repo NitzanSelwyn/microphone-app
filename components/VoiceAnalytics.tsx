@@ -61,6 +61,7 @@ export const VoiceAnalytics: React.FC = () => {
 
     const [volumeNotification, setVolumeNotification] = useState<{ message: string, type: 'high' | 'low' | 'ok' | 'background', color?: string } | null>(null);
     const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const lastNotificationRef = useRef<string | null>(null);
 
     const speakerLevelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -92,29 +93,6 @@ export const VoiceAnalytics: React.FC = () => {
             pulseAnim.setValue(1);
         }
     }, [currentSpeaker, pulseAnim]);
-
-    const calculateAudioLevel = (dataArray: Uint8Array): number => {
-        // Calculate RMS (Root Mean Square) of the audio data
-        const rms = Math.sqrt(
-            dataArray.reduce((sum, val) => sum + (val * val), 0) / dataArray.length
-        );
-
-        // Convert to dB, using a reference level
-        // Adding 1 to avoid Math.log(0)
-        const db = 20 * Math.log10((rms + 1) / 255);
-
-        // Normalize dB value to a reasonable range (-60dB to 0dB)
-        const normalizedDb = Math.max(-60, Math.min(0, db));
-
-        // Convert to positive range (0-60)
-        return Math.round(normalizedDb + 60);
-    };
-
-    const calculateMovingAverage = (values: number[], windowSize: number = 10): number => {
-        if (values.length === 0) return 0;
-        const window = values.slice(-windowSize);
-        return Math.round(window.reduce((a, b) => a + b, 0) / window.length);
-    };
 
     const startRecording = async () => {
         try {
@@ -430,11 +408,6 @@ export const VoiceAnalytics: React.FC = () => {
 
     // Add useEffect for volume notifications
     useEffect(() => {
-        // Clear any existing notification timeout
-        if (notificationTimeoutRef.current) {
-            clearTimeout(notificationTimeoutRef.current);
-        }
-
         // Only show notification if the speaker level is significantly above the background (actual voice)
         const threshold = 8; // dB above background to consider as speaking
         const isSpeaking = speakerLevel - backgroundLevel > threshold;
@@ -450,14 +423,19 @@ export const VoiceAnalytics: React.FC = () => {
             }
         }
 
-        if (notification) {
+        // Only set a new notification if it is different from the last one
+        if (notification && notification.message !== lastNotificationRef.current) {
             setVolumeNotification(notification);
+            lastNotificationRef.current = notification.message;
+            if (notificationTimeoutRef.current) {
+                clearTimeout(notificationTimeoutRef.current);
+            }
             notificationTimeoutRef.current = setTimeout(() => {
                 setVolumeNotification(null);
-            }, 30000); // Show notification for 30 seconds
-        } else {
-            setVolumeNotification(null);
+                lastNotificationRef.current = null;
+            }, 8000); // Show notification for 8 seconds
         }
+        // Do not clear notification immediately if isSpeaking becomes false
 
         // Cleanup function
         return () => {
@@ -512,31 +490,26 @@ export const VoiceAnalytics: React.FC = () => {
     };
 
     const downloadConversations = () => {
-        // Create text content from all conversations
-        const conversations = transcriptionHistory.reduce((acc, item) => {
-            if (!acc[item.conversationId]) {
-                acc[item.conversationId] = [];
+        // Group all items by date (YYYY-MM-DD)
+        const itemsByDate = transcriptionHistory.reduce((acc, item) => {
+            const date = item.timestamp ? new Date(item.timestamp).toISOString().slice(0, 10) : 'unknown';
+            if (!acc[date]) {
+                acc[date] = [];
             }
-            acc[item.conversationId].push(item);
+            acc[date].push(item);
             return acc;
-        }, {} as Record<string, Array<{
-            _id: string;
-            text: string;
-            timestamp: Date;
-            speakerId: string;
-            conversationId: string;
-        }>>);
+        }, {} as Record<string, typeof transcriptionHistory>);
 
-        const textContent = Object.entries(conversations)
-            .map(([conversationId, items]) => {
-                const date = new Date(items[0].timestamp).toLocaleDateString();
-                const conversationText = items
+        const textContent = Object.entries(itemsByDate)
+            .map(([date, items]) => {
+                const dateStr = date !== 'unknown' ? new Date(date).toLocaleDateString() : '';
+                const dayText = items
                     .map(item => {
-                        const time = new Date(item.timestamp).toLocaleTimeString();
+                        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
                         return `[${time}] Speaker ${item.speakerId}: ${item.text}`;
                     })
                     .join('\n');
-                return `Conversation from ${date}\n${conversationText}\n\n`;
+                return `Transcriptions from ${dateStr}\n${dayText}\n`;
             })
             .join('---\n\n');
 
@@ -610,21 +583,6 @@ export const VoiceAnalytics: React.FC = () => {
                 />
             )}
 
-            {/* Add save status display */}
-            {/* {saveStatus && (
-                <View style={[
-                    styles.saveStatusContainer,
-                    { backgroundColor: saveStatus.type === 'success' ? '#dcfce7' : '#fee2e2' }
-                ]}>
-                    <Text style={[
-                        styles.saveStatusText,
-                        { color: saveStatus.type === 'success' ? '#166534' : '#991b1b' }
-                    ]}>
-                        {saveStatus.message}
-                    </Text>
-                </View>
-            )} */}
-
             {/* Name Input Modal */}
             <Modal
                 transparent={true}
@@ -648,13 +606,6 @@ export const VoiceAnalytics: React.FC = () => {
                         />
 
                         <View style={styles.modalButtons}>
-                            {/* <TouchableOpacity 
-                                style={[styles.modalButton, styles.skipButton]} 
-                                onPress={() => setNameModalVisible(false)}
-                            >
-                                <Text style={styles.skipButtonText}>Skip</Text>
-                            </TouchableOpacity> */}
-
                             <TouchableOpacity
                                 style={[styles.modalButton, styles.submitButton]}
                                 onPress={handleNameSubmit}
