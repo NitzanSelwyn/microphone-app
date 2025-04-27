@@ -599,10 +599,6 @@ export const voiceAnalyticsStyles = StyleSheet.create({
     },
     // Add new styles for hamburger menu and sidebar
     hamburgerButton: {
-        position: 'absolute',
-        top: 16,
-        left: 16,
-        zIndex: 1000,
         padding: 8,
         backgroundColor: 'white',
         borderRadius: 8,

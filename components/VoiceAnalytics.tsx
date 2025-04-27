@@ -560,6 +560,13 @@ export const VoiceAnalytics: React.FC = () => {
         <View style={styles.container}>
             {/* Header Bar */}
             <View style={styles.headerBar}>
+                <TouchableOpacity
+                    style={styles.hamburgerButton}
+                    onPress={toggleSidebar}
+                    accessibilityLabel="Open sidebar menu"
+                >
+                    <Text style={styles.hamburgerIcon}>☰</Text>
+                </TouchableOpacity>
                 <Text style={styles.appTitle}>Voice Analytics</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={styles.userAvatar} accessibilityLabel="User avatar">
@@ -576,15 +583,6 @@ export const VoiceAnalytics: React.FC = () => {
                     </TouchableOpacity>
                 </View>
             </View>
-
-            {/* Add hamburger button */}
-            <TouchableOpacity
-                style={styles.hamburgerButton}
-                onPress={toggleSidebar}
-                accessibilityLabel="Open sidebar menu"
-            >
-                <Text style={styles.hamburgerIcon}>☰</Text>
-            </TouchableOpacity>
 
             {/* Add sidebar */}
             <Sidebar
@@ -668,7 +666,7 @@ export const VoiceAnalytics: React.FC = () => {
             <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.mainContent}>
                     <View style={styles.leftColumn}>
-                        <View style={styles.statusCard}>
+                        <View style={[styles.statusCard, { backgroundColor: getVolumeColor(backgroundLevel) }]}>
                             {/* Live badge */}
                             {currentSpeaker && (
                                 <View style={styles.liveBadge}>
